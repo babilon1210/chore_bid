@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "605689934779",
+    "project_id": "chorebid-2e58c",
+    "storage_bucket": "chorebid-2e58c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:605689934779:android:96e54430a943dad38a0a9e",
+        "android_client_info": {
+          "package_name": "com.eitan.chorebid"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAso8Xd4i29wRtEjZVZ1zpkh18QTFipQt8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
