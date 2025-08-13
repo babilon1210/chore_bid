@@ -24,7 +24,9 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
   late Map<String, String> progressMap;
 
   Map<String, String> _childNamesById = {};
+  // Selections
   Set<String> _selectedToVerify = {};
+  Set<String> _selectedToPay = {};
 
   @override
   void initState() {
@@ -92,9 +94,65 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
         choreId: choreId,
         childId: childId,
       );
+      // Local UI update
+      progressMap[childId] = 'verified';
     }
 
-    if (context.mounted) Navigator.pop(context);
+    setState(() {
+      _selectedToVerify.clear();
+    });
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selected children marked as verified')),
+      );
+    }
+  }
+
+  // --- Payment helpers ------------------------------------------------------
+
+  int _parseAmountCents(String raw) {
+    // Accept things like "30", "30.50", "30,50", "₪30.50"
+    var s = raw.trim();
+    s = s.replaceAll(RegExp(r'[^0-9\.,]'), '');
+    if (s.contains(',') && !s.contains('.')) {
+      s = s.replaceAll(',', '.'); // "30,5" -> "30.5"
+    } else if (s.contains(',') && s.contains('.')) {
+      s = s.replaceAll(',', ''); // "1,234.50" -> "1234.50"
+    }
+    final value = double.tryParse(s) ?? 0.0;
+    return (value * 100).round();
+  }
+
+  Future<void> _paySelectedChildren() async {
+    final familyId = UserService.currentUser!.familyId!;
+    final choreId = widget.chore.id;
+    final payer = UserService.currentUser!.uid;
+    final amountCents = _parseAmountCents(rewardController.text);
+
+    for (final childId in _selectedToPay) {
+      await ChoreService().markChoreAsPaid(
+        familyId: familyId,
+        choreId: choreId,
+        childId: childId,
+        amountCents: amountCents,
+        currency: 'ILS',
+        method: 'cash',
+        paidByUid: payer,
+      );
+      // Local UI update
+      progressMap[childId] = 'paid';
+    }
+
+    setState(() {
+      _selectedToPay.clear();
+    });
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selected children marked as paid')),
+      );
+    }
   }
 
   @override
@@ -229,12 +287,25 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                       ),
               ),
               const SizedBox(height: 20),
+
+              // Verify completed
               _section(
                 icon: Icons.check,
                 label: 'Verify Completed Chores',
                 contentWidget: _buildVerificationChecklist(),
               ),
+              const SizedBox(height: 20),
+
+              // Pay verified
+              _section(
+                icon: Icons.payments,
+                label: 'Pay Verified Children',
+                contentWidget: _buildPaymentChecklist(),
+              ),
+
               const Spacer(),
+
+              // Action buttons
               if (_selectedToVerify.isNotEmpty)
                 Center(
                   child: ElevatedButton.icon(
@@ -248,6 +319,22 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                     ),
                   ),
                 ),
+              if (_selectedToVerify.isNotEmpty && _selectedToPay.isNotEmpty)
+                const SizedBox(height: 8),
+              if (_selectedToPay.isNotEmpty)
+                Center(
+                  child: ElevatedButton.icon(
+                    onPressed: _paySelectedChildren,
+                    icon: const Icon(Icons.attach_money),
+                    label: const Text("Pay Selected"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green[700],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                  ),
+                ),
+              if (isEditing) const SizedBox(height: 8),
               if (isEditing)
                 Center(
                   child: ElevatedButton.icon(
@@ -320,6 +407,36 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                 _selectedToVerify.add(childId);
               } else {
                 _selectedToVerify.remove(childId);
+              }
+            });
+          },
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildPaymentChecklist() {
+    // Only show children who are verified and not yet paid
+    final verifiedNotPaid = progressMap.entries.where((e) => e.value == 'verified');
+
+    if (verifiedNotPaid.isEmpty) {
+      return const Text('No verified chores to pay', style: TextStyle(fontSize: 16));
+    }
+
+    return Column(
+      children: verifiedNotPaid.map((entry) {
+        final childId = entry.key;
+        final name = _childNamesById[childId] ?? 'Unknown';
+
+        return CheckboxListTile(
+          title: Text(name),
+          value: _selectedToPay.contains(childId),
+          onChanged: (checked) {
+            setState(() {
+              if (checked == true) {
+                _selectedToPay.add(childId);
+              } else {
+                _selectedToPay.remove(childId);
               }
             });
           },

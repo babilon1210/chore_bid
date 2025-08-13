@@ -1,13 +1,13 @@
 import 'dart:math';
 import 'package:chore_bid/services/user_service.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; 
+import 'package:intl/intl.dart';
 
 class ChoreCard extends StatelessWidget {
   final String title;
   final String reward;
-  final String status;
-  final Map<String, String>? progress; // NEW
+  final String status; // may be 'expired'
+  final Map<String, String>? progress; // childId -> status
   final List<String> assignedTo;
   final VoidCallback? onTap;
   final DateTime deadline;
@@ -29,17 +29,30 @@ class ChoreCard extends StatelessWidget {
   }) : colorSeed = seed ?? 0;
 
   static final List<Color> happyColors = [
-    Color(0xFFFFF59D),
-    Color.fromARGB(255, 237, 176, 157),
-    Color.fromARGB(255, 153, 227, 237),
-    Color.fromARGB(255, 157, 218, 159),
-    Color.fromARGB(255, 184, 162, 224),
-    Color(0xFFFFF176),
-    Color.fromARGB(255, 237, 161, 169),
+    const Color(0xFFFFF59D),
+    const Color.fromARGB(255, 237, 176, 157),
+    const Color.fromARGB(255, 153, 227, 237),
+    const Color.fromARGB(255, 157, 218, 159),
+    const Color.fromARGB(255, 184, 162, 224),
+    const Color(0xFFFFF176),
+    const Color.fromARGB(255, 237, 161, 169),
   ];
 
+  bool _any(String s) => progress?.containsValue(s) ?? false;
+
   Color getCardColor() {
-    if (progress != null && progress!.containsValue('verified')) return Colors.green[100]!;
+    // Make expired visually distinct.
+    if (status == 'expired') {
+      if (_any('paid') || _any('verified') || _any('complete')) {
+        // expired but with progress → a very light green
+        return Colors.green[50]!;
+      }
+      // expired with no completion → neutral grey
+      return Colors.grey[200]!;
+    }
+    // Non-expired colors
+    if (_any('paid')) return Colors.green[200]!;
+    if (_any('verified')) return Colors.green[100]!;
     final random = Random(title.hashCode + colorSeed);
     return happyColors[random.nextInt(happyColors.length)];
   }
@@ -49,121 +62,208 @@ class ChoreCard extends StatelessWidget {
     return 'Before ${timeFormat.format(deadline)}';
   }
 
-  String getProgressSummary() {
-    final claimedCount = progress?.values.where((s) => s != 'assigned').length ?? 0;
-    return '$claimedCount/${assignedTo.length} claimed';
+  // Child-only status (raw from progress; default 'assigned')
+  String getCurrentUserRawStatus() {
+    final uid = UserService.currentUser!.uid;
+    return progress?[uid] ?? 'assigned';
   }
 
-  String getCurrentUserStatus() {
-    final uid = UserService.currentUser!.uid;
-    return progress?[uid] ?? 'Available';
+  String labelForChildStatus(String s) =>
+      s == 'assigned' ? 'Available' : _titleCase(s);
+
+  String _titleCase(String s) =>
+      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1).toLowerCase();
+
+  // --- Parent counts computed ONLY from progress map ------------------------
+  Map<String, int> computeParentCountsFromProgress() {
+    final counts = <String, int>{
+      'claimed': 0,
+      'complete': 0,
+      'verified': 0,
+      'paid': 0,
+    };
+    if (progress == null) return counts;
+    for (final s in progress!.values) {
+      if (counts.containsKey(s)) counts[s] = (counts[s] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  // --- UI helpers -----------------------------------------------------------
+  Widget _pill({
+    required Widget leading,
+    required String text,
+    required Color bg,
+    required Color fg,
+    EdgeInsets margin = const EdgeInsets.only(top: 6),
+  }) {
+    return Container(
+      margin: margin,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: const [
+          BoxShadow(blurRadius: 2, offset: Offset(0, 1), color: Color(0x22000000))
+        ],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        leading,
+        const SizedBox(width: 6),
+        Text(text,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
+      ]),
+    );
+  }
+
+  (Color bg, Color fg, IconData icon) _styleFor(String status) {
+    switch (status) {
+      case 'claimed':
+        return (const Color(0xFFB3E5FC), const Color(0xFF01579B), Icons.back_hand_rounded);
+      case 'complete':
+        return (const Color(0xFFFFF9C4), const Color(0xFF795548), Icons.check_circle_rounded);
+      case 'verified':
+        return (const Color(0xFFC8E6C9), const Color(0xFF1B5E20), Icons.verified_rounded);
+      case 'paid':
+        return (const Color(0xFFDCEFD6), const Color(0xFF2E7D32), Icons.attach_money_rounded);
+      case 'assigned':
+        return (const Color(0xFFE0E0E0), const Color(0xFF424242), Icons.group_rounded);
+      default:
+        return (const Color(0xFFE0E0E0), const Color(0xFF424242), Icons.info_outline_rounded);
+    }
+  }
+
+  Widget _parentRightPanel() {
+    final counts = computeParentCountsFromProgress();
+    final items = <Widget>[];
+
+    // Natural flow
+    for (final s in const ['claimed', 'complete', 'verified', 'paid']) {
+      final n = counts[s] ?? 0;
+      if (n <= 0) continue;
+      final (bg, fg, icon) = _styleFor(s);
+      items.add(_pill(
+        leading: Icon(icon, size: 16, color: fg),
+        text: '${_titleCase(s)}: $n',
+        bg: bg,
+        fg: fg,
+        margin: items.isEmpty ? EdgeInsets.zero : const EdgeInsets.only(top: 6),
+      ));
+    }
+
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: items,
+    );
+  }
+
+  Widget _childRightBadge(String raw) {
+    final label = labelForChildStatus(raw);
+    final (bg, fg, icon) = _styleFor(raw);
+    return _pill(
+      leading: Icon(icon, size: 16, color: fg),
+      text: label,
+      bg: raw == 'assigned' ? const Color.fromARGB(255, 243, 117, 86) : bg,
+      fg: raw == 'assigned' ? Colors.white : fg,
+      margin: EdgeInsets.zero,
+    );
+  }
+
+  Widget _expiredBadge() {
+    if (status != 'expired') return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEEEEE),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFBDBDBD)),
+      ),
+      child: const Text(
+        'Expired',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF616161),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final role = UserService.currentUser!.role;
     final isChild = role == 'child';
+    final childRawStatus = isChild ? getCurrentUserRawStatus() : null;
 
     return Card(
       color: getCardColor(),
       elevation: 3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        title: Text(
-          title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.bold,
-            color: Color.fromARGB(255, 30, 2, 49),
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const SizedBox(width: 6),
-                Text(
-                  '₪$reward',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Color.fromARGB(255, 30, 2, 49),
-                  ),
-                ),
-                Text(
-                  ' - $formattedDeadline',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Color.fromARGB(255, 30, 2, 49),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-          ],
-        ),
-        trailing: Builder(
-          builder: (context) {
-            final currentUserStatus = getCurrentUserStatus();
-            final showAvailable = currentUserStatus == 'assigned';
-
-            if (showAvailable) {
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color.fromARGB(255, 243, 117, 86),
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: const Text(
-                      'Available',
-                      style: TextStyle(
-                        fontSize: 12,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // LEFT: title + meta
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 17,
                         fontWeight: FontWeight.bold,
-                        color: Color.fromARGB(255, 255, 255, 255),
+                        color: Color.fromARGB(255, 30, 2, 49),
                       ),
                     ),
-                  ),
-                ],
-              );
-            }
-
-            return Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFB2DFDB),
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: Text(
-                    isExclusive || isChild
-                        ? currentUserStatus
-                        : getProgressSummary(),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF00695C),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '₪$reward',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color.fromARGB(255, 30, 2, 49),
+                          ),
+                        ),
+                        Text(
+                          ' • $formattedDeadline',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color.fromARGB(255, 30, 2, 49),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
+                    _expiredBadge(), // <-- small pill if expired
+                  ],
                 ),
-              ],
-            );
-          },
+              ),
+
+              const SizedBox(width: 12),
+
+              // RIGHT: parent breakdown (from progress only) OR child status badge
+              Flexible(
+                flex: 0,
+                child: isChild ? _childRightBadge(childRawStatus!) : _parentRightPanel(),
+              ),
+            ],
+          ),
         ),
-        onTap: onTap,
       ),
     );
   }

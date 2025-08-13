@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // <-- add this
 import '../../services/chore_service.dart';
 import '../../services/family_service.dart';
 import '../../models/user_model.dart';
@@ -88,7 +89,7 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
           familyId: widget.user.familyId!,
           title: _titleController.text.trim(),
           description: _descriptionController.text.trim(),
-          reward: _rewardController.text.trim(),
+          reward: _rewardController.text.trim(), // digits only
           assignedTo: _selectedChildren.toList(),
           deadline: _selectedDeadline!,
           isExclusive: _isExclusive,
@@ -100,14 +101,12 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
 
         Navigator.pop(context);
       } catch (e) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error creating chore: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error creating chore: $e')));
       }
     } else if (_selectedDeadline == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please pick a deadline')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Please pick a deadline')));
     }
   }
 
@@ -155,16 +154,39 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                     : null,
               ),
               const SizedBox(height: 16),
+
+              // --------- NUMBERS ONLY ---------
               TextFormField(
                 controller: _rewardController,
-                decoration: const InputDecoration(
-                  labelText: 'Reward (e.g. \$5 or Ice Cream)',
-                  border: OutlineInputBorder(),
+                keyboardType: const TextInputType.numberWithOptions(
+                  signed: false,
+                  decimal: false,
                 ),
-                validator: (value) =>
-                    value == null || value.isEmpty ? 'Please enter a reward' : null,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly, // <= blocks non-digits
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Reward',
+                  hintText: 'Numbers only',
+                  border: OutlineInputBorder(),
+                  prefixText: '₪',
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter a reward';
+                  }
+                  if (!RegExp(r'^\d+$').hasMatch(value)) {
+                    return 'Use digits only';
+                  }
+                  if (int.tryParse(value) == 0) {
+                    return 'Amount must be greater than 0';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 16),
+              // --------------------------------
+
               SwitchListTile(
                 title: const Text('Exclusive Chore'),
                 subtitle: const Text('Only one child can claim this chore'),
@@ -186,8 +208,8 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                 Row(
                   children: [
                     Checkbox(
-                      value:
-                          _selectedChildren.length == _childNamesById.length,
+                      value: _selectedChildren.length == _childNamesById.length &&
+                          _childNamesById.isNotEmpty,
                       onChanged: (val) => _toggleSelectAll(val ?? false),
                     ),
                     const Text("Assign to All Children"),

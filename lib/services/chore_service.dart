@@ -17,8 +17,8 @@ class ChoreService {
     required bool isExclusive,
   }) async {
     await FirebaseFunctions.instance
-    .httpsCallable('createChoreWithTasks')
-    .call({
+        .httpsCallable('createChoreWithTasks')
+        .call({
       'familyId': familyId,
       'title': title,
       'description': description,
@@ -43,11 +43,11 @@ class ChoreService {
         .collection('chores')
         .doc(choreId)
         .update({
-          'title': title,
-          'reward': reward,
-          'deadline': deadline,
-          'assignedTo': assignedTo,
-        });
+      'title': title,
+      'reward': reward,
+      'deadline': deadline,
+      'assignedTo': assignedTo,
+    });
   }
 
   Future<void> deleteChore({
@@ -63,60 +63,83 @@ class ChoreService {
   }
 
   Future<void> claimChore({
-  required String familyId,
-  required String choreId,
-  required String childId,
-}) async {
-  final choreRef = _firestore
-      .collection('families')
-      .doc(familyId)
-      .collection('chores')
-      .doc(choreId);
+    required String familyId,
+    required String choreId,
+    required String childId,
+  }) async {
+    final choreRef = _firestore
+        .collection('families')
+        .doc(familyId)
+        .collection('chores')
+        .doc(choreId);
 
-  await choreRef.set({
-  'progress': {
-    childId: 'claimed',
+    // ✅ set nested map + merge
+    await choreRef.set({
+      'progress': { childId: 'claimed' },
+    }, SetOptions(merge: true));
   }
-}, SetOptions(merge: true));
-}
 
   Future<void> unclaimChore({
-  required String familyId,
-  required String choreId,
-  required String childId,
-}) async {
-  final choreRef = _firestore
-      .collection('families')
-      .doc(familyId)
-      .collection('chores')
-      .doc(choreId);
+    required String familyId,
+    required String choreId,
+    required String childId,
+  }) async {
+    final choreRef = _firestore
+        .collection('families')
+        .doc(familyId)
+        .collection('chores')
+        .doc(choreId);
 
-  await choreRef.update({
-    'progress.$childId': FieldValue.delete(),
-  });
-}
-
+    // ✅ deleting a single key must use update + dotted path
+    await choreRef.update({
+      'progress.$childId': FieldValue.delete(),
+    });
+  }
 
   Future<void> markChoreAsVerified({
-  required String familyId,
-  required String choreId,
-  required String childId,
-}) async {
-  final choreRef = _firestore
-      .collection('families')
-      .doc(familyId)
-      .collection('chores')
-      .doc(choreId);
+    required String familyId,
+    required String choreId,
+    required String childId,
+  }) async {
+    final choreRef = _firestore
+        .collection('families')
+        .doc(familyId)
+        .collection('chores')
+        .doc(choreId);
 
-  await choreRef.set({
-    'progress.$childId': 'verified',
-  }, SetOptions(merge: true));
-}
+    // ✅ set nested map + merge
+    await choreRef.set({
+      'progress': { childId: 'verified' },
+    }, SetOptions(merge: true));
+  }
 
   Future<void> markChoreAsComplete({
+    required String familyId,
+    required String choreId,
+    required String childId,
+  }) async {
+    final choreRef = _firestore
+        .collection('families')
+        .doc(familyId)
+        .collection('chores')
+        .doc(choreId);
+
+    // ✅ set nested map + merge
+    await choreRef.set({
+      'progress': { childId: 'complete' },
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> markChoreAsPaid({
   required String familyId,
   required String choreId,
   required String childId,
+  required int amountCents,            // parse from your reward
+  String currency = 'ILS',
+  String method = 'cash',
+  String? txRef,
+  String? paidByUid,
+  DateTime? paidAt,
 }) async {
   final choreRef = _firestore
       .collection('families')
@@ -124,24 +147,44 @@ class ChoreService {
       .collection('chores')
       .doc(choreId);
 
-  await choreRef.set({
-    'progress.$childId': 'complete',
+  final paymentsRef = choreRef.collection('payments').doc(); // or .doc(childId) if 1:1
+
+  final batch = _firestore.batch();
+
+  // 1) Update child status -> paid (nested map + merge)
+  batch.set(choreRef, {
+    'progress': { childId: 'paid' },
   }, SetOptions(merge: true));
+
+  // 2) Add a payment record
+  batch.set(paymentsRef, {
+    'childId': childId,
+    'amountCents': amountCents,
+    'currency': currency,
+    'method': method,
+    'txRef': txRef,
+    'paidBy': paidByUid,
+    'paidAt': (paidAt ?? DateTime.now()).toUtc(),
+    'createdAt': FieldValue.serverTimestamp(),
+  });
+
+  await batch.commit();
 }
 
   /// Stream all chores for the current user's family and update global model
   Stream<List<Chore>> listenToChores(String familyId) {
+    const activeStatuses = ['available','claimed','complete','verified','paid'];
     return _firestore
         .collection('families')
         .doc(familyId)
         .collection('chores')
+        .where('status', whereIn: activeStatuses)
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) {
-          final updatedChores =
-              snapshot.docs.map((doc) {
-                return Chore.fromMap(doc.data(), doc.id);
-              }).toList();
+          final updatedChores = snapshot.docs
+              .map((doc) => Chore.fromMap(doc.data(), doc.id))
+              .toList();
 
           // ✅ Update global model
           if (UserService.currentUser != null) {
