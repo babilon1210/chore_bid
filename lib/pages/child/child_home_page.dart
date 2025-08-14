@@ -9,7 +9,13 @@ import '../../models/chore_model.dart';
 import '../../widgets/chore_card.dart';
 import 'wallet_page.dart';
 
-enum ChildSection { available, myWork, history }
+// Confetti
+import 'package:confetti/confetti.dart';
+
+// TTS
+import 'package:flutter_tts/flutter_tts.dart';
+
+enum ChildTab { active, history }
 
 class ChildHomePage extends StatefulWidget {
   const ChildHomePage({super.key});
@@ -20,25 +26,39 @@ class ChildHomePage extends StatefulWidget {
 
 class _ChildHomePageState extends State<ChildHomePage> {
   int _selectedIndex = 0; // bottom nav
-  ChildSection _section = ChildSection.available; // segmented control
+  ChildTab _tab = ChildTab.active; // Active | History
 
   final String childId = UserService.currentUser!.uid;
 
-  // Second stream (Option B): recent expired chores (client-side filtered/sorted)
+  // recent expired chores (client-side filtered/sorted)
   List<Chore> _expiredRecent = [];
+
+  // ---------- Confetti ----------
+  late final ConfettiController _confettiCtrl;
+  bool _confettiOn = false;
+
+  // ---------- TTS ----------
+  late final FlutterTts _tts;
+  bool _ttsReady = false;
 
   @override
   void initState() {
     super.initState();
 
+    // Confetti controller
+    _confettiCtrl = ConfettiController(duration: const Duration(milliseconds: 900));
+
+    // TTS init
+    _initTts();
+
     final familyId = UserService.currentUser?.familyId;
     if (familyId != null) {
-      // Existing listener (active/non-expired chores)
+      // active/non-expired chores
       ChoreService().listenToChores(familyId).listen((_) {
         if (mounted) setState(() {});
       });
 
-      // Index-free expired listener (limit + client-side filter/sort)
+      // expired listener
       final cutoff = DateTime.now().subtract(const Duration(days: 60));
       FirebaseFirestore.instance
           .collection('families')
@@ -64,6 +84,67 @@ class _ChildHomePageState extends State<ChildHomePage> {
     }
   }
 
+  Future<void> _initTts() async {
+    _tts = FlutterTts();
+    // make short phrases finish before continuing
+    await _tts.awaitSpeakCompletion(true);
+    // voice feel: deeper & clear
+    await _tts.setLanguage('en-US');
+    await _tts.setSpeechRate(0.48); // slower = clearer
+    await _tts.setPitch(0.4);      // <1.0 = deeper
+    await _tts.setVolume(100.0);
+
+    // Try to select an en-US voice if available (device/engine dependent)
+    try {
+      final voices = await _tts.getVoices;
+      if (voices is List) {
+        final en = voices.where((v) {
+          final loc = (v['locale'] ?? v['language'] ?? '').toString().toLowerCase();
+          return loc.startsWith('en') && (loc.contains('us') || loc.contains('gb') || loc.contains('en'));
+        }).toList();
+        if (en.isNotEmpty) {
+          final chosen = en.first;
+          await _tts.setVoice({
+            'name': chosen['name'],
+            'locale': (chosen['locale'] ?? chosen['language'] ?? 'en-US').toString(),
+          });
+        }
+      }
+    } catch (_) {
+      // Best-effort; ignore if not supported by engine
+    }
+
+    _ttsReady = true;
+  }
+
+  Future<void> _sayAwesome() async {
+    if (!_ttsReady) await _initTts();
+    await _tts.speak('Awesome!');
+  }
+
+  @override
+  void dispose() {
+    _confettiCtrl.dispose();
+    // stop any ongoing speech
+    _tts.stop();
+    super.dispose();
+  }
+
+  // Fire a quick, centered confetti burst
+  void _burstConfetti() {
+    if (!mounted) return;
+    setState(() => _confettiOn = true);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _confettiCtrl.play();
+    });
+
+    Future.delayed(const Duration(milliseconds: 1100), () {
+      if (!mounted) return;
+      setState(() => _confettiOn = false);
+    });
+  }
+
   // ------------- Core helpers -------------
 
   bool _isExpired(Chore c) => c.status == 'expired';
@@ -87,7 +168,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
     final s = _my(c);
     final mineOpen = (s == null || s == 'assigned');
-
     if (!mineOpen) return false;
 
     // Exclusive: only available if nobody else advanced past 'assigned'
@@ -192,6 +272,11 @@ class _ChildHomePageState extends State<ChildHomePage> {
                   choreId: chore.id,
                   childId: childId,
                 );
+                // 🎉 Visual + Audio celebration on successful claim
+                if (mounted) {
+                  _burstConfetti();
+                  _sayAwesome();
+                }
               },
               child: const Text('Yes'),
             ),
@@ -223,7 +308,36 @@ class _ChildHomePageState extends State<ChildHomePage> {
         ),
         centerTitle: true,
       ),
-      body: _buildBody(),
+      // Confetti overlay above content
+      body: Stack(
+        children: [
+          _buildBody(),
+          if (_confettiOn)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Align(
+                  alignment: Alignment.center,
+                  child: ConfettiWidget(
+                    confettiController: _confettiCtrl,
+                    blastDirectionality: BlastDirectionality.explosive,
+                    emissionFrequency: 0, // single burst
+                    numberOfParticles: 60,
+                    maxBlastForce: 25,
+                    minBlastForce: 10,
+                    gravity: 0.9,
+                    colors: const [
+                      Color(0xFFFFC107),
+                      Color(0xFF8BC34A),
+                      Color(0xFF03A9F4),
+                      Color(0xFFE91E63),
+                      Color(0xFF9C27B0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         backgroundColor: const Color.fromARGB(255, 255, 233, 164),
         currentIndex: _selectedIndex,
@@ -250,9 +364,13 @@ class _ChildHomePageState extends State<ChildHomePage> {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             children: [
-              _segmentControl(),
+              _topTabs(),
               const SizedBox(height: 12),
-              Expanded(child: _buildSegmentContent()),
+              Expanded(
+                child: _tab == ChildTab.active
+                    ? _buildActiveContent()
+                    : _buildHistoryContent(),
+              ),
             ],
           ),
         );
@@ -265,13 +383,13 @@ class _ChildHomePageState extends State<ChildHomePage> {
     }
   }
 
-  // Segmented control
-  Widget _segmentControl() {
-    Widget btn(String label, ChildSection s) {
-      final sel = _section == s;
+  // Top two-tab control
+  Widget _topTabs() {
+    Widget btn(String label, ChildTab t) {
+      final sel = _tab == t;
       return Expanded(
         child: GestureDetector(
-          onTap: () => setState(() => _section = s),
+          onTap: () => setState(() => _tab = t),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             padding: const EdgeInsets.symmetric(vertical: 10),
@@ -301,22 +419,33 @@ class _ChildHomePageState extends State<ChildHomePage> {
       ),
       child: Row(
         children: [
-          btn('Available', ChildSection.available),
-          btn('My Work', ChildSection.myWork),
-          btn('History', ChildSection.history),
+          btn('Active', ChildTab.active),
+          btn('History', ChildTab.history),
         ],
       ),
     );
   }
 
-  Widget _buildSegmentContent() {
-    switch (_section) {
-      case ChildSection.available:
-        return _listCard(
+  // ACTIVE tab: show ONLY what's available; if none at all, show single notice.
+  Widget _buildActiveContent() {
+    final hasAvailable = _available.isNotEmpty;
+    final hasMyWork = _claimed.isNotEmpty ||
+        _completedWaiting.isNotEmpty ||
+        _verifiedWaiting.isNotEmpty;
+
+    // Nothing to show at all
+    if (!hasAvailable && !hasMyWork) {
+      return ListView(children: [_emptyState('No chores available right now.')]);
+    }
+
+    final widgets = <Widget>[];
+
+    if (hasAvailable) {
+      widgets.add(
+        _listCard(
           title: 'Available Chores',
           color: const Color.fromARGB(255, 251, 213, 184),
           items: _available,
-          emptyText: 'No chores available right now.',
           tileBuilder: (c) => ChoreCard(
             title: c.title,
             reward: c.reward,
@@ -327,30 +456,47 @@ class _ChildHomePageState extends State<ChildHomePage> {
             deadline: c.deadline,
             onTap: () => _handleChoreTap(c),
           ),
-        );
-
-      case ChildSection.myWork:
-        // Only render a section if it has at least one item
-        final children = <Widget>[];
-        children.addAll(_sectionIfAny('Claimed', _claimed));
-        children.addAll(_sectionIfAny('Waiting Review', _completedWaiting));
-        children.addAll(_sectionIfAny('Waiting Payment', _verifiedWaiting));
-
-        if (children.isEmpty) {
-          return ListView(children: [_emptyState('Nothing to do here yet.')]);
-        }
-        return ListView(children: children);
-
-      case ChildSection.history:
-        final children = <Widget>[];
-        children.addAll(_sectionIfAny('Paid', _paid));
-        children.addAll(_sectionIfAny('Expired — Missed', _expiredMissed));
-
-        if (children.isEmpty) {
-          return ListView(children: [_emptyState('No history yet.')]);
-        }
-        return ListView(children: children);
+        ),
+      );
     }
+
+    if (hasAvailable && hasMyWork) widgets.add(const SizedBox(height: 16));
+
+    if (hasMyWork) {
+      final sections = <Widget>[];
+      sections.addAll(_sectionIfAny('Claimed', _claimed));
+      sections.addAll(_sectionIfAny('Waiting Review', _completedWaiting));
+      sections.addAll(_sectionIfAny('Waiting Payment', _verifiedWaiting));
+
+      widgets.add(
+        Card(
+          color: const Color.fromARGB(255, 243, 231, 172),
+          elevation: 4,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: sections,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView(children: widgets);
+  }
+
+  // HISTORY tab: (Paid, Expired — Missed) and hides empty sections
+  Widget _buildHistoryContent() {
+    final children = <Widget>[];
+    children.addAll(_sectionIfAny('Paid', _paid));
+    children.addAll(_sectionIfAny('Expired — Missed', _expiredMissed));
+
+    if (children.isEmpty) {
+      return ListView(children: [_emptyState('No history yet.')]);
+    }
+    return ListView(children: children);
   }
 
   // Build a subsection only if it has items
@@ -358,18 +504,17 @@ class _ChildHomePageState extends State<ChildHomePage> {
     if (items.isEmpty) return const [];
     return [
       _subHeader('$title • ${items.length}'),
-      _spacerV(8),
+      const SizedBox(height: 8),
       ...items.map((c) => _tile(c)),
-      _spacerV(16),
+      const SizedBox(height: 16),
     ];
   }
 
-  // Reusable List container card for the Available section
+  // Reusable List container card; call this ONLY with non-empty items.
   Widget _listCard({
     required String title,
     required Color color,
     required List<Chore> items,
-    required String emptyText,
     required Widget Function(Chore) tileBuilder,
   }) {
     return Card(
@@ -378,23 +523,21 @@ class _ChildHomePageState extends State<ChildHomePage> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: items.isEmpty
-            ? _emptyState(emptyText)
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color.fromARGB(255, 14, 20, 61),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  ...items.map(tileBuilder),
-                ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Color.fromARGB(255, 14, 20, 61),
               ),
+            ),
+            const SizedBox(height: 10),
+            ...items.map(tileBuilder),
+          ],
+        ),
       ),
     );
   }
@@ -428,8 +571,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
           color: Color.fromARGB(255, 14, 20, 61),
         ),
       );
-
-  Widget _spacerV(double h) => SizedBox(height: h);
 
   Widget _emptyState(String label) => Center(
         child: Container(

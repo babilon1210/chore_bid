@@ -1,0 +1,37 @@
+{
+  "@@locale": "en",
+  "appTitle": "Chorebid",
+  "tabActive": "Active",
+  "tabHistory": "History",
+
+  "availableChores": "Available Chores",
+  "myWork": "My Work",
+  "claimed": "Claimed",
+  "waitingReview": "Waiting Review",
+  "waitingPayment": "Waiting Payment",
+  "paid": "Paid",
+  "expiredMissed": "Expired — Missed",
+
+  "noChoresNow": "No chores available right now.",
+  "noHistory": "No history yet.",
+  "acceptChoreQ": "Do you want to accept this chore?",
+  "choreOptions": "Chore Options",
+  "yes": "Yes",
+  "no": "No",
+  "done": "Done",
+  "unclaim": "Unclaim",
+
+  "deadlineShort": "Before {time}",
+  "@deadlineShort": {
+    "description": "Short deadline label",
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
+
+  "countLabel": "{count, plural, =0{0} one{1} other{{count}}}",
+  "@countLabel": {
+    "description": "Formats count for headers",
+    "placeholders": { "count": { "type": "int" } }
+  }
+}
