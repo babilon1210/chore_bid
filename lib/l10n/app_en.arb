@@ -10,6 +10,7 @@
   "waitingReview": "Waiting Review",
   "waitingPayment": "Waiting Payment",
   "paid": "Paid",
+  "paidThisMonth": "Paid this month",
   "expiredMissed": "Expired — Missed",
 
   "noChoresNow": "No chores available right now.",

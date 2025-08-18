@@ -6,10 +6,11 @@
 
   "availableChores": "משימות זמינות",
   "myWork": "המשימות שלי",
-  "claimed": "נתבע",
+  "claimed": "שלי",
   "waitingReview": "ממתין לאישור",
   "waitingPayment": "ממתין לתשלום",
   "paid": "שולם",
+  "paidThisMonth": "שולם החודש",
   "expiredMissed": "פג תוקף — הוחמץ",
 
   "noChoresNow": "אין משימות זמינות כרגע.",
@@ -19,7 +20,7 @@
   "yes": "כן",
   "no": "לא",
   "done": "סיימתי",
-  "unclaim": "ביטול תביעה",
+  "unclaim": "ביטול מטלה",
 
   "deadlineShort": "לפני {time}",
   "@deadlineShort": {

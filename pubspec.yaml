@@ -39,6 +39,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   # Enable ARB-based localization code gen
@@ -49,3 +50,24 @@ flutter:
   assets:
     - assets/anim/awesome.json
     - assets/anim/confetti.json
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # If you’re not ready to create a separate foreground yet, you can omit the two
+  # adaptive_* lines and keep just image_path. But adaptive looks nicer on Android.
+  image_path: assets/icon/app_icon.png
+
+  # Android adaptive (recommended)
+  adaptive_icon_background: "#F4BE47"        # your yellow
+  adaptive_icon_foreground: assets/icon/app_icon_foreground.png
+
+  # iOS: strip alpha (Apple doesn’t allow transparency in icons)
+  remove_alpha_ios: true
+
+  # Optional: also generate for web/macos/windows
+  # web: true
+  # macos: true
+  # windows:
+  #   generate: true
+

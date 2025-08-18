@@ -36,6 +36,13 @@ class ChoreCard extends StatelessWidget {
     const Color.fromARGB(255, 184, 162, 224),
     const Color(0xFFFFF176),
     const Color.fromARGB(255, 237, 161, 169),
+    const Color.fromARGB(255, 255, 206, 140), // soft orange
+    const Color.fromARGB(255, 190, 231, 226), // pale teal
+    const Color.fromARGB(255, 200, 232, 200), // minty green
+    const Color.fromARGB(255, 210, 190, 235), // light lavender
+    const Color.fromARGB(255, 255, 220, 164), // warm butter
+    const Color.fromARGB(255, 245, 180, 188), // rosy blush
+    const Color.fromARGB(255, 186, 220, 245), // baby blue
   ];
 
   bool _any(String s) => progress?.containsValue(s) ?? false;

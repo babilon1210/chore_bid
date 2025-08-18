@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // <-- add this
+import 'package:flutter/services.dart'; // digits-only for reward
 import '../../services/chore_service.dart';
 import '../../services/family_service.dart';
 import '../../models/user_model.dart';
@@ -26,6 +26,7 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
   Set<String> _selectedChildren = {};
 
   bool _isExclusive = true;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -54,36 +55,76 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
     });
   }
 
-  void _pickDeadline() async {
+  bool _isDeadlineValid(DateTime d) {
+    final min = DateTime.now().add(const Duration(minutes: 30));
+    // Valid if deadline is >= now + 30 minutes
+    return !d.isBefore(min);
+  }
+
+  Future<void> _pickDeadline() async {
     final now = DateTime.now();
     final date = await showDatePicker(
       context: context,
       initialDate: now,
-      firstDate: now,
+      firstDate: now, // no past dates
       lastDate: now.add(const Duration(days: 30)),
     );
 
-    if (date != null) {
-      final time = await showTimePicker(
-        context: context,
-        initialTime: TimeOfDay.now(),
+    if (date == null) return;
+
+    // If picking "today", make suggested time at least 30 mins ahead for convenience.
+    final suggested = now.add(const Duration(minutes: 31));
+    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
+
+    final initialTime = isToday
+        ? TimeOfDay(hour: suggested.hour, minute: suggested.minute)
+        : TimeOfDay.now();
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: initialTime,
+    );
+
+    if (time == null) return;
+
+    final picked = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+
+    if (!_isDeadlineValid(picked)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please choose a deadline at least 30 minutes from now.')),
       );
-      if (time != null) {
-        setState(() {
-          _selectedDeadline = DateTime(
-            date.year,
-            date.month,
-            date.day,
-            time.hour,
-            time.minute,
-          );
-        });
-      }
+      return; // do not set invalid deadline
     }
+
+    setState(() {
+      _selectedDeadline = picked;
+    });
   }
 
   Future<void> _submitForm() async {
-    if (_formKey.currentState!.validate() && _selectedDeadline != null) {
+    if (_isSubmitting) return;
+
+    // Validate form fields first
+    final formOk = _formKey.currentState!.validate();
+
+    // Validate deadline presence + rules
+    if (_selectedDeadline == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Please pick a deadline')));
+      return;
+    }
+    if (!_isDeadlineValid(_selectedDeadline!)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Deadline must be at least 30 minutes from now.')),
+      );
+      return;
+    }
+
+    if (formOk) {
+      setState(() => _isSubmitting = true);
+      FocusScope.of(context).unfocus();
+
       try {
         await _choreService.addChore(
           familyId: widget.user.familyId!,
@@ -95,18 +136,18 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
           isExclusive: _isExclusive,
         );
 
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Chore created successfully!')),
         );
-
         Navigator.pop(context);
       } catch (e) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error creating chore: $e')));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error creating chore: $e')),
+        );
+        setState(() => _isSubmitting = false);
       }
-    } else if (_selectedDeadline == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Please pick a deadline')));
     }
   }
 
@@ -135,6 +176,7 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
             children: [
               TextFormField(
                 controller: _titleController,
+                enabled: !_isSubmitting,
                 decoration: const InputDecoration(
                   labelText: 'Chore Title',
                   border: OutlineInputBorder(),
@@ -145,6 +187,7 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _descriptionController,
+                enabled: !_isSubmitting,
                 decoration: const InputDecoration(
                   labelText: 'Chore Description',
                   border: OutlineInputBorder(),
@@ -158,12 +201,13 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
               // --------- NUMBERS ONLY ---------
               TextFormField(
                 controller: _rewardController,
+                enabled: !_isSubmitting,
                 keyboardType: const TextInputType.numberWithOptions(
                   signed: false,
                   decimal: false,
                 ),
                 inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly, // <= blocks non-digits
+                  FilteringTextInputFormatter.digitsOnly,
                 ],
                 decoration: const InputDecoration(
                   labelText: 'Reward',
@@ -191,26 +235,32 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                 title: const Text('Exclusive Chore'),
                 subtitle: const Text('Only one child can claim this chore'),
                 value: _isExclusive,
-                onChanged: (val) {
-                  setState(() {
-                    _isExclusive = val;
-                  });
-                },
+                onChanged: _isSubmitting
+                    ? null
+                    : (val) {
+                        setState(() {
+                          _isExclusive = val;
+                        });
+                      },
               ),
               const SizedBox(height: 16),
               ListTile(
                 title: Text(deadlineLabel),
+                subtitle: const Text('Must be at least 30 minutes from now'),
                 trailing: const Icon(Icons.calendar_today),
-                onTap: _pickDeadline,
+                onTap: _isSubmitting ? null : _pickDeadline,
               ),
               const SizedBox(height: 16),
+
               if (_childNamesById.isNotEmpty) ...[
                 Row(
                   children: [
                     Checkbox(
                       value: _selectedChildren.length == _childNamesById.length &&
                           _childNamesById.isNotEmpty,
-                      onChanged: (val) => _toggleSelectAll(val ?? false),
+                      onChanged: _isSubmitting
+                          ? null
+                          : (val) => _toggleSelectAll(val ?? false),
                     ),
                     const Text("Assign to All Children"),
                   ],
@@ -219,22 +269,46 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                   return CheckboxListTile(
                     title: Text(entry.value),
                     value: _selectedChildren.contains(entry.key),
-                    onChanged: (val) {
-                      setState(() {
-                        if (val == true) {
-                          _selectedChildren.add(entry.key);
-                        } else {
-                          _selectedChildren.remove(entry.key);
-                        }
-                      });
-                    },
+                    onChanged: _isSubmitting
+                        ? null
+                        : (val) {
+                            setState(() {
+                              if (val == true) {
+                                _selectedChildren.add(entry.key);
+                              } else {
+                                _selectedChildren.remove(entry.key);
+                              }
+                            });
+                          },
                   );
                 }).toList(),
               ],
+
               const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: _submitForm,
-                child: const Text('Create Chore Bid'),
+
+              // ----- Submit button with loading state -----
+              SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submitForm,
+                  child: _isSubmitting
+                      ? Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Text('Creating…'),
+                          ],
+                        )
+                      : const Text('Create Chore Bid'),
+                ),
               ),
             ],
           ),

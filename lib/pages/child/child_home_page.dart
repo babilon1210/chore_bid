@@ -15,6 +15,9 @@ import 'package:confetti/confetti.dart';
 // TTS
 import 'package:flutter_tts/flutter_tts.dart';
 
+// 🔤 Localizations (your generated file)
+import 'package:chore_bid/l10n/generated/app_localizations.dart';
+
 enum ChildTab { active, history }
 
 class ChildHomePage extends StatefulWidget {
@@ -86,15 +89,12 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   Future<void> _initTts() async {
     _tts = FlutterTts();
-    // make short phrases finish before continuing
     await _tts.awaitSpeakCompletion(true);
-    // voice feel: deeper & clear
     await _tts.setLanguage('en-US');
-    await _tts.setSpeechRate(0.48); // slower = clearer
-    await _tts.setPitch(0.4);      // <1.0 = deeper
+    await _tts.setSpeechRate(0.48);
+    await _tts.setPitch(0.4);
     await _tts.setVolume(100.0);
 
-    // Try to select an en-US voice if available (device/engine dependent)
     try {
       final voices = await _tts.getVoices;
       if (voices is List) {
@@ -110,10 +110,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
           });
         }
       }
-    } catch (_) {
-      // Best-effort; ignore if not supported by engine
-    }
-
+    } catch (_) {}
     _ttsReady = true;
   }
 
@@ -125,7 +122,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
   @override
   void dispose() {
     _confettiCtrl.dispose();
-    // stop any ongoing speech
     _tts.stop();
     super.dispose();
   }
@@ -229,15 +225,16 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   void _handleChoreTap(Chore chore) {
     final isMineClaimed = _isMyClaimed(chore);
+    final l = AppLocalizations.of(context);
 
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(isMineClaimed ? 'Chore Options' : 'Accept Chore?'),
+        title: Text(isMineClaimed ? l.choreOptions : l.acceptChoreQ),
         content: Text(
           isMineClaimed
-              ? 'What would you like to do with this chore?'
-              : 'Do you want to accept this chore?',
+              ? 'What would you like to do with this chore?' // (no key yet) keep literal
+              : l.acceptChoreQ,
         ),
         actions: [
           if (isMineClaimed) ...[
@@ -250,7 +247,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
                   childId: childId,
                 );
               },
-              child: const Text('Done'),
+              child: Text(l.done),
             ),
             TextButton(
               onPressed: () async {
@@ -261,7 +258,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
                   childId: childId,
                 );
               },
-              child: const Text('Unclaim'),
+              child: Text(l.unclaim),
             ),
           ] else ...[
             TextButton(
@@ -278,11 +275,11 @@ class _ChildHomePageState extends State<ChildHomePage> {
                   _sayAwesome();
                 }
               },
-              child: const Text('Yes'),
+              child: Text(l.yes),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('No'),
+              child: Text(l.no),
             ),
           ],
         ],
@@ -294,6 +291,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    // NOTE: Keep "Chorebid" in English by request
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 244, 190, 71),
       appBar: AppBar(
@@ -320,7 +318,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
                   child: ConfettiWidget(
                     confettiController: _confettiCtrl,
                     blastDirectionality: BlastDirectionality.explosive,
-                    emissionFrequency: 0, // single burst
+                    emissionFrequency: 0,
                     numberOfParticles: 60,
                     maxBlastForce: 25,
                     minBlastForce: 10,
@@ -385,6 +383,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // Top two-tab control
   Widget _topTabs() {
+    final l = AppLocalizations.of(context);
+
     Widget btn(String label, ChildTab t) {
       final sel = _tab == t;
       return Expanded(
@@ -419,8 +419,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
       ),
       child: Row(
         children: [
-          btn('Active', ChildTab.active),
-          btn('History', ChildTab.history),
+          btn(l.tabActive, ChildTab.active),
+          btn(l.tabHistory, ChildTab.history),
         ],
       ),
     );
@@ -428,6 +428,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // ACTIVE tab: show ONLY what's available; if none at all, show single notice.
   Widget _buildActiveContent() {
+    final l = AppLocalizations.of(context);
+
     final hasAvailable = _available.isNotEmpty;
     final hasMyWork = _claimed.isNotEmpty ||
         _completedWaiting.isNotEmpty ||
@@ -435,7 +437,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
     // Nothing to show at all
     if (!hasAvailable && !hasMyWork) {
-      return ListView(children: [_emptyState('No chores available right now.')]);
+      return ListView(children: [_emptyState(l.noChoresNow)]);
     }
 
     final widgets = <Widget>[];
@@ -443,7 +445,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
     if (hasAvailable) {
       widgets.add(
         _listCard(
-          title: 'Available Chores',
+          title: l.availableChores,
           color: const Color.fromARGB(255, 251, 213, 184),
           items: _available,
           tileBuilder: (c) => ChoreCard(
@@ -464,9 +466,9 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
     if (hasMyWork) {
       final sections = <Widget>[];
-      sections.addAll(_sectionIfAny('Claimed', _claimed));
-      sections.addAll(_sectionIfAny('Waiting Review', _completedWaiting));
-      sections.addAll(_sectionIfAny('Waiting Payment', _verifiedWaiting));
+      sections.addAll(_sectionIfAny(AppLocalizations.of(context).claimed, _claimed));
+      sections.addAll(_sectionIfAny(AppLocalizations.of(context).waitingReview, _completedWaiting));
+      sections.addAll(_sectionIfAny(AppLocalizations.of(context).waitingPayment, _verifiedWaiting));
 
       widgets.add(
         Card(
@@ -489,21 +491,24 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // HISTORY tab: (Paid, Expired — Missed) and hides empty sections
   Widget _buildHistoryContent() {
+    final l = AppLocalizations.of(context);
+
     final children = <Widget>[];
-    children.addAll(_sectionIfAny('Paid', _paid));
-    children.addAll(_sectionIfAny('Expired — Missed', _expiredMissed));
+    children.addAll(_sectionIfAny(l.paid, _paid));
+    children.addAll(_sectionIfAny(l.expiredMissed, _expiredMissed));
 
     if (children.isEmpty) {
-      return ListView(children: [_emptyState('No history yet.')]);
+      return ListView(children: [_emptyState(l.noHistory)]);
     }
     return ListView(children: children);
   }
 
   // Build a subsection only if it has items
   List<Widget> _sectionIfAny(String title, List<Chore> items) {
+    final l = AppLocalizations.of(context);
     if (items.isEmpty) return const [];
     return [
-      _subHeader('$title • ${items.length}'),
+      _subHeader('$title • ${l.countLabel(items.length)}'),
       const SizedBox(height: 8),
       ...items.map((c) => _tile(c)),
       const SizedBox(height: 16),
@@ -554,7 +559,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
           progress: c.progress,
           deadline: c.deadline,
           onTap: () {
-            // Only claimed chores (and available chores, where relevant) expose the action sheet
             if (_isMyClaimed(c) || _isAvailable(c)) {
               _handleChoreTap(c);
             }
