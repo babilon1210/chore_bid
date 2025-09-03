@@ -27,10 +27,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get claimed => 'Claimed';
 
   @override
-  String get waitingReview => 'Waiting Review';
+  String get waitingReview => 'Awaiting Review';
 
   @override
-  String get waitingPayment => 'Waiting Payment';
+  String get waitingPayment => 'Awaiting Payment';
 
   @override
   String get paid => 'Paid';

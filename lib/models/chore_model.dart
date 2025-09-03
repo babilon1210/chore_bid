@@ -1,3 +1,4 @@
+// ======================= models/chore_model.dart =======================
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Chore {
@@ -10,7 +11,14 @@ class Chore {
   final bool isPaid;
   final DateTime? paidAt;
   final List<String> assignedTo;
-  final Map<String, String>? progress;
+
+  /// NEW: progress now stores an object per child:
+  /// progress: {
+  ///   "<childUid>": { "status": "paid", "time": Timestamp? }
+  /// }
+  /// (Legacy data where value is a String is still tolerated at read-time.)
+  final Map<String, dynamic>? progress;
+
   final bool isExclusive;
 
   Chore({
@@ -28,20 +36,33 @@ class Chore {
   });
 
   factory Chore.fromMap(Map<String, dynamic> data, String id) {
+    final deadlineRaw = data['deadline'];
+    DateTime deadline;
+    if (deadlineRaw is Timestamp) {
+      deadline = deadlineRaw.toDate();
+    } else if (deadlineRaw is DateTime) {
+      deadline = deadlineRaw;
+    } else {
+      deadline = DateTime.now();
+    }
+
     return Chore(
       id: id,
       title: data['title'] ?? '',
       description: data['description'] ?? '',
       reward: data['reward'] ?? '',
       status: data['status'] ?? '',
-      deadline: (data['deadline'] as Timestamp).toDate(),
+      deadline: deadline,
       assignedTo: List<String>.from(data['assignedTo'] ?? []),
-      progress: data['progress'] != null
-          ? Map<String, String>.from(data['progress'])
+      // Store as dynamic map so we can support both legacy (String) and new ({status,time})
+      progress: (data['progress'] is Map)
+          ? Map<String, dynamic>.from(data['progress'] as Map)
           : null,
       isExclusive: data['isExclusive'] ?? true,
       isPaid: data['isPaid'] ?? false,
-      paidAt: (data['paidAt'] as Timestamp?)?.toDate(),
+      paidAt: (data['paidAt'] is Timestamp)
+          ? (data['paidAt'] as Timestamp).toDate()
+          : (data['paidAt'] is DateTime ? data['paidAt'] as DateTime : null),
     );
   }
 
@@ -53,7 +74,7 @@ class Chore {
       'description': description,
       'deadline': Timestamp.fromDate(deadline),
       'assignedTo': assignedTo,
-      'progress': progress,
+      'progress': progress, // expected to be { childUid: {status, time} }
       'isExclusive': isExclusive,
       'isPaid': isPaid,
       'paidAt': paidAt != null ? Timestamp.fromDate(paidAt!) : null,

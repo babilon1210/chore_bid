@@ -134,13 +134,13 @@ abstract class AppLocalizations {
   /// No description provided for @waitingReview.
   ///
   /// In en, this message translates to:
-  /// **'Waiting Review'**
+  /// **'Awaiting Review'**
   String get waitingReview;
 
   /// No description provided for @waitingPayment.
   ///
   /// In en, this message translates to:
-  /// **'Waiting Payment'**
+  /// **'Awaiting Payment'**
   String get waitingPayment;
 
   /// No description provided for @paid.

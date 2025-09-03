@@ -17,24 +17,27 @@ class _QRScannerPageState extends State<QRScannerPage> {
   @override
   void reassemble() {
     super.reassemble();
-    if (Platform.isAndroid) {
-      controller?.pauseCamera();
-    }
+    if (Platform.isAndroid) controller?.pauseCamera();
     controller?.resumeCamera();
   }
 
-  void _onQRViewCreated(QRViewController controller) {
-    this.controller = controller;
-
-    controller.scannedDataStream.listen((scanData) {
+  void _onQRViewCreated(QRViewController c) {
+    controller = c;
+    c.scannedDataStream.listen((scanData) {
       if (_scanned) return;
-      setState(() {
-        _scanned = true;
-      });
-
-      controller.pauseCamera();
+      _scanned = true;
+      c.pauseCamera();
       Navigator.pop(context, scanData.code);
     });
+  }
+
+  void _onPermissionSet(BuildContext context, QRViewController _, bool granted) {
+    if (!granted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Camera permission denied.')),
+      );
+      Navigator.pop(context); // gracefully exit the scanner
+    }
   }
 
   @override
@@ -45,18 +48,21 @@ class _QRScannerPageState extends State<QRScannerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cutOut = MediaQuery.of(context).size.width * 0.8;
+
     return Scaffold(
       body: Stack(
         children: [
           QRView(
             key: qrKey,
             onQRViewCreated: _onQRViewCreated,
+            onPermissionSet: (ctrl, p) => _onPermissionSet(context, ctrl, p),
             overlay: QrScannerOverlayShape(
               borderColor: Colors.indigo,
               borderRadius: 10,
               borderLength: 30,
               borderWidth: 8,
-              cutOutSize: MediaQuery.of(context).size.width * 0.8,
+              cutOutSize: cutOut,
             ),
           ),
           Positioned(

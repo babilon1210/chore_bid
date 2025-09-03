@@ -21,7 +21,9 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
   late TextEditingController rewardController;
   late DateTime deadline;
   late List<String> assignedTo;
-  late Map<String, String> progressMap;
+
+  /// IMPORTANT: values can be either legacy String or {status,time} map
+  late Map<String, dynamic> progressMap;
 
   Map<String, String> _childNamesById = {};
   // Selections
@@ -36,7 +38,10 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
     rewardController = TextEditingController(text: widget.chore.reward);
     deadline = widget.chore.deadline;
     assignedTo = List<String>.from(widget.chore.assignedTo);
-    progressMap = Map<String, String>.from(widget.chore.progress ?? {});
+
+    // FIX: keep dynamic since values may be maps
+    progressMap = Map<String, dynamic>.from(widget.chore.progress ?? {});
+
     _loadChildNames();
   }
 
@@ -59,6 +64,18 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
     super.dispose();
   }
 
+  // ---- helpers for new/old progress shapes ----
+  String? _statusFrom(dynamic v) {
+    if (v is String) return v; // legacy
+    if (v is Map<String, dynamic>) return v['status'] as String?;
+    if (v is Map) return v['status'] as String?;
+    return null;
+  }
+
+  bool _isStatus(dynamic v, String s) => _statusFrom(v) == s;
+
+  // --------------------------------------------
+
   Future<void> _saveChanges() async {
     await ChoreService().updateChore(
       familyId: UserService.currentUser!.familyId!,
@@ -70,9 +87,9 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
     );
 
     setState(() => isEditing = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Chore updated')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Chore updated')));
   }
 
   Future<void> _deleteChore() async {
@@ -93,9 +110,13 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
         familyId: familyId,
         choreId: choreId,
         childId: childId,
+        time: DateTime.now(),
       );
-      // Local UI update
-      progressMap[childId] = 'verified';
+      // Local UI update in new shape
+      progressMap[childId] = {
+        'status': 'verified',
+        'time': DateTime.now().toUtc(),
+      };
     }
 
     setState(() {
@@ -139,9 +160,13 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
         currency: 'ILS',
         method: 'cash',
         paidByUid: payer,
+        paidAt: DateTime.now(),
       );
-      // Local UI update
-      progressMap[childId] = 'paid';
+      // Local UI update in new shape
+      progressMap[childId] = {
+        'status': 'paid',
+        'time': DateTime.now().toUtc(),
+      };
     }
 
     setState(() {
@@ -173,7 +198,10 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
         ),
         centerTitle: true,
         actions: [
-          if (progressMap.values.every((s) => s == 'unclaimed'))
+          // If everything is still unclaimed, allow edit (keep original intent)
+          if (progressMap.values.every(
+            (v) => _statusFrom(v) == null || _statusFrom(v) == 'unclaimed',
+          ))
             IconButton(
               icon: Icon(isEditing ? Icons.cancel : Icons.edit),
               onPressed: () => setState(() => isEditing = !isEditing),
@@ -205,7 +233,10 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                 label: 'Title',
                 contentWidget: isEditing
                     ? TextField(controller: titleController)
-                    : Text(titleController.text, style: const TextStyle(fontSize: 18)),
+                    : Text(
+                        titleController.text,
+                        style: const TextStyle(fontSize: 18),
+                      ),
               ),
               const SizedBox(height: 20),
               _section(
@@ -232,7 +263,9 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                             context: context,
                             initialDate: deadline,
                             firstDate: DateTime.now(),
-                            lastDate: DateTime.now().add(const Duration(days: 365)),
+                            lastDate: DateTime.now().add(
+                              const Duration(days: 365),
+                            ),
                           );
                           if (picked != null) {
                             final time = await showTimePicker(
@@ -252,9 +285,15 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                             }
                           }
                         },
-                        child: Text(dateFormat.format(deadline), style: const TextStyle(fontSize: 16)),
+                        child: Text(
+                          dateFormat.format(deadline),
+                          style: const TextStyle(fontSize: 16),
+                        ),
                       )
-                    : Text(dateFormat.format(deadline), style: const TextStyle(fontSize: 18)),
+                    : Text(
+                        dateFormat.format(deadline),
+                        style: const TextStyle(fontSize: 18),
+                      ),
               ),
               const SizedBox(height: 20),
               _section(
@@ -282,7 +321,9 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                         }).toList(),
                       )
                     : Text(
-                        assignedTo.map((id) => _childNamesById[id] ?? 'Unknown').join(', '),
+                        assignedTo
+                            .map((id) => _childNamesById[id] ?? 'Unknown')
+                            .join(', '),
                         style: const TextStyle(fontSize: 16),
                       ),
               ),
@@ -315,7 +356,10 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.indigo,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
                   ),
                 ),
@@ -330,7 +374,10 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green[700],
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
                   ),
                 ),
@@ -344,7 +391,10 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.indigo,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
                   ),
                 ),
@@ -387,10 +437,14 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
   }
 
   Widget _buildVerificationChecklist() {
-    final completedChildren = progressMap.entries.where((e) => e.value == 'complete');
+    final completedChildren =
+        progressMap.entries.where((e) => _isStatus(e.value, 'complete'));
 
     if (completedChildren.isEmpty) {
-      return const Text('No completed chores to verify', style: TextStyle(fontSize: 16));
+      return const Text(
+        'No completed chores to verify',
+        style: TextStyle(fontSize: 16),
+      );
     }
 
     return Column(
@@ -417,10 +471,14 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
 
   Widget _buildPaymentChecklist() {
     // Only show children who are verified and not yet paid
-    final verifiedNotPaid = progressMap.entries.where((e) => e.value == 'verified');
+    final verifiedNotPaid =
+        progressMap.entries.where((e) => _isStatus(e.value, 'verified'));
 
     if (verifiedNotPaid.isEmpty) {
-      return const Text('No verified chores to pay', style: TextStyle(fontSize: 16));
+      return const Text(
+        'No verified chores to pay',
+        style: TextStyle(fontSize: 16),
+      );
     }
 
     return Column(

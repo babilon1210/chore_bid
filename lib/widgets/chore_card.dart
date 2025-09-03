@@ -1,3 +1,4 @@
+// lib/widgets/chore_card.dart
 import 'dart:math';
 import 'package:chore_bid/services/user_service.dart';
 import 'package:flutter/material.dart';
@@ -7,13 +8,37 @@ class ChoreCard extends StatelessWidget {
   final String title;
   final String reward;
   final String status; // may be 'expired'
-  final Map<String, String>? progress; // childId -> status
+  /// childId -> either a String status (legacy) OR a Map {status, time}
+  final Map<String, dynamic>? progress;
   final List<String> assignedTo;
   final VoidCallback? onTap;
   final DateTime deadline;
   final bool isExclusive;
 
-  final int colorSeed;
+  /// optional description to show under the title
+  final String description;
+
+  /// If provided, we’ll use happyColors[paletteIndex % N] for active chores
+  /// so the color stays consistent across list moves (e.g., Available -> Claimed).
+  final int? paletteIndex;
+
+  /// When true (and status == 'expired'), the card shows ONLY an "Expired" pill
+  /// on the RIGHT side (with date+time) and hides the usual right-side status
+  /// and bottom expired badge. Also removes the bottom "Before ..." time, leaving only price.
+  final bool rightExpiredOnly;
+
+  /// When true, the bottom “Expired” pill is always hidden (useful for Active tab).
+  final bool suppressBottomExpiredPill;
+
+  /// For ACTIVE chores on the child's home page:
+  /// - If status is complete/verified -> hide deadline entirely.
+  /// - Otherwise, move "Before\nDate\nTime" under the right-side status capsule,
+  ///   and suppress the bottom "Before ..." next to the price.
+  final bool showRightDeadlineForActive;
+
+  /// For PARENT pages: when true, always show the deadline under the right-side widget
+  /// (regardless of child/parent role and status). Also suppresses the bottom deadline.
+  final bool showRightDeadline;
 
   const ChoreCard({
     super.key,
@@ -24,9 +49,84 @@ class ChoreCard extends StatelessWidget {
     required this.isExclusive,
     required this.assignedTo,
     required this.progress,
+    required this.description,
     this.onTap,
-    int? seed,
-  }) : colorSeed = seed ?? 0;
+    this.paletteIndex,
+    this.rightExpiredOnly = false,
+    this.suppressBottomExpiredPill = false,
+    this.showRightDeadlineForActive = false,
+    this.showRightDeadline = false,
+  });
+
+  // ---------------- helpers for new/old progress shapes ----------------
+
+  /// Extracts a status string from either a legacy String or a `{status,time}` map.
+  String? _statusFrom(dynamic v) {
+    if (v is String) return v; // legacy
+    if (v is Map<String, dynamic>) return v['status'] as String?;
+    if (v is Map) return v['status'] as String?;
+    return null;
+  }
+
+  DateTime? _timeFrom(dynamic v) {
+    if (v is Map<String, dynamic>) {
+      final t = v['time'];
+      if (t is DateTime) return t;
+      if (t is String) {
+        try {
+          return DateTime.parse(t);
+        } catch (_) {}
+      }
+      // Firestore Timestamp compatibility (best-effort, without importing Timestamp)
+      try {
+        // ignore: avoid_dynamic_calls
+        if (t != null && t is dynamic && t.millisecondsSinceEpoch is int) {
+          return DateTime.fromMillisecondsSinceEpoch(t.millisecondsSinceEpoch as int);
+        }
+      } catch (_) {}
+    } else if (v is Map) {
+      final t = v['time'];
+      if (t is DateTime) return t;
+    }
+    return null;
+  }
+
+  DateTime? _myStatusTime() {
+    final uid = UserService.currentUser!.uid;
+    final v = progress?[uid];
+    return _timeFrom(v);
+  }
+
+  bool _any(String s) => progress?.values.any((v) => _statusFrom(v) == s) ?? false;
+
+  // --- “available for me” detection (mirrors page logic) ---
+  bool _someoneElseAdvanced(String myId) {
+    final prog = progress;
+    if (prog == null) return false;
+    for (final e in prog.entries) {
+      if (e.key == myId) continue;
+      final s = _statusFrom(e.value);
+      if (s != null && s != 'assigned') return true;
+    }
+    return false;
+  }
+
+  bool _isAvailableForMe() {
+    if (status == 'expired') return false;
+    final uid = UserService.currentUser!.uid;
+
+    if (!assignedTo.contains(uid)) return false;
+
+    final myStatus = _statusFrom(progress?[uid]);
+    final mineOpen = (myStatus == null || myStatus == 'assigned');
+    if (!mineOpen) return false;
+
+    if (isExclusive && _someoneElseAdvanced(uid)) return false;
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------
 
   static final List<Color> happyColors = [
     const Color(0xFFFFF59D),
@@ -36,52 +136,70 @@ class ChoreCard extends StatelessWidget {
     const Color.fromARGB(255, 184, 162, 224),
     const Color(0xFFFFF176),
     const Color.fromARGB(255, 237, 161, 169),
-    const Color.fromARGB(255, 255, 206, 140), // soft orange
-    const Color.fromARGB(255, 190, 231, 226), // pale teal
-    const Color.fromARGB(255, 200, 232, 200), // minty green
-    const Color.fromARGB(255, 210, 190, 235), // light lavender
-    const Color.fromARGB(255, 255, 220, 164), // warm butter
-    const Color.fromARGB(255, 245, 180, 188), // rosy blush
-    const Color.fromARGB(255, 186, 220, 245), // baby blue
+    const Color.fromARGB(255, 255, 206, 140),
+    const Color.fromARGB(255, 190, 231, 226),
+    const Color.fromARGB(255, 200, 232, 200),
+    const Color.fromARGB(255, 210, 190, 235),
+    const Color.fromARGB(255, 255, 220, 164),
+    const Color.fromARGB(255, 245, 180, 188),
+    const Color.fromARGB(255, 186, 220, 245),
   ];
 
-  bool _any(String s) => progress?.containsValue(s) ?? false;
-
   Color getCardColor() {
-    // Make expired visually distinct.
+    // 1) Expired -> greys / very light green if “done-ish”
     if (status == 'expired') {
       if (_any('paid') || _any('verified') || _any('complete')) {
-        // expired but with progress → a very light green
         return Colors.green[50]!;
       }
-      // expired with no completion → neutral grey
       return Colors.grey[200]!;
     }
-    // Non-expired colors
+
+    // 2) Achieved states for any child -> greens
     if (_any('paid')) return Colors.green[200]!;
     if (_any('verified')) return Colors.green[100]!;
-    final random = Random(title.hashCode + colorSeed);
+
+    // 3) Active: if a paletteIndex was provided, honor it for consistency
+    if (paletteIndex != null) {
+      final idx = paletteIndex! % happyColors.length;
+      return happyColors[idx];
+    }
+
+    // 4) Fallback for other active chores -> deterministic but may repeat
+    final random = Random(title.hashCode);
     return happyColors[random.nextInt(happyColors.length)];
   }
 
   String get formattedDeadline {
-    final timeFormat = DateFormat.jm();
-    return 'Before ${timeFormat.format(deadline)}';
+    // DATE + TIME
+    final df = DateFormat.yMMMd();
+    final tf = DateFormat.jm();
+    return 'Before ${df.format(deadline)} ${tf.format(deadline)}';
   }
 
-  // Child-only status (raw from progress; default 'assigned')
+  String _formatDate(DateTime? t) {
+    if (t == null) return '';
+    final df = DateFormat.yMMMd();
+    return df.format(t);
+  }
+
+  String _formatTime(DateTime? t) {
+    if (t == null) return '';
+    final tf = DateFormat.jm();
+    return tf.format(t);
+  }
+
+  /// Returns the current user's status string (defaults to 'assigned').
   String getCurrentUserRawStatus() {
     final uid = UserService.currentUser!.uid;
-    return progress?[uid] ?? 'assigned';
+    final v = progress?[uid];
+    return _statusFrom(v) ?? 'assigned';
   }
 
-  String labelForChildStatus(String s) =>
-      s == 'assigned' ? 'Available' : _titleCase(s);
+  String labelForChildStatus(String s) => s == 'assigned' ? 'Available' : _titleCase(s);
 
   String _titleCase(String s) =>
-      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1).toLowerCase();
+      s.isNotEmpty ? (s[0].toUpperCase() + s.substring(1).toLowerCase()) : s;
 
-  // --- Parent counts computed ONLY from progress map ------------------------
   Map<String, int> computeParentCountsFromProgress() {
     final counts = <String, int>{
       'claimed': 0,
@@ -90,16 +208,18 @@ class ChoreCard extends StatelessWidget {
       'paid': 0,
     };
     if (progress == null) return counts;
-    for (final s in progress!.values) {
-      if (counts.containsKey(s)) counts[s] = (counts[s] ?? 0) + 1;
+    for (final val in progress!.values) {
+      final s = _statusFrom(val);
+      if (s != null && counts.containsKey(s)) {
+        counts[s] = (counts[s] ?? 0) + 1;
+      }
     }
     return counts;
   }
 
-  // --- UI helpers -----------------------------------------------------------
   Widget _pill({
     required Widget leading,
-    required String text,
+    required Widget textWidget,
     required Color bg,
     required Color fg,
     EdgeInsets margin = const EdgeInsets.only(top: 6),
@@ -114,12 +234,17 @@ class ChoreCard extends StatelessWidget {
           BoxShadow(blurRadius: 2, offset: Offset(0, 1), color: Color(0x22000000))
         ],
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        leading,
-        const SizedBox(width: 6),
-        Text(text,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
-      ]),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          leading,
+          const SizedBox(width: 6),
+          DefaultTextStyle(
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+            child: textWidget,
+          ),
+        ],
+      ),
     );
   }
 
@@ -144,14 +269,13 @@ class ChoreCard extends StatelessWidget {
     final counts = computeParentCountsFromProgress();
     final items = <Widget>[];
 
-    // Natural flow
     for (final s in const ['claimed', 'complete', 'verified', 'paid']) {
       final n = counts[s] ?? 0;
       if (n <= 0) continue;
       final (bg, fg, icon) = _styleFor(s);
       items.add(_pill(
         leading: Icon(icon, size: 16, color: fg),
-        text: '${_titleCase(s)}: $n',
+        textWidget: Text('${_titleCase(s)}: $n'),
         bg: bg,
         fg: fg,
         margin: items.isEmpty ? EdgeInsets.zero : const EdgeInsets.only(top: 6),
@@ -167,19 +291,98 @@ class ChoreCard extends StatelessWidget {
     );
   }
 
+  Widget _rightDeadlineLines(Color fg) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Before',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: fg.withOpacity(0.9),
+            height: 1.1,
+          ),
+        ),
+        Text(
+          _formatDate(deadline),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: fg.withOpacity(0.85),
+            height: 1.1,
+          ),
+        ),
+        Text(
+          _formatTime(deadline),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: fg.withOpacity(0.85),
+            height: 1.1,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _childRightBadge(String raw) {
-    final label = labelForChildStatus(raw);
     final (bg, fg, icon) = _styleFor(raw);
+
+    // Special: for PAID, show date (line 2) and time (line 3) under the "Paid" title.
+    if (raw == 'paid') {
+      final paidAt = _myStatusTime();
+      final dateStr = _formatDate(paidAt);
+      final timeStr = _formatTime(paidAt);
+      return _pill(
+        leading: Icon(icon, size: 16, color: fg),
+        textWidget: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Text('Paid'),
+            if (dateStr.isNotEmpty)
+              Text(
+                dateStr,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: fg.withOpacity(0.85),
+                  height: 1.15,
+                ),
+              ),
+            if (timeStr.isNotEmpty)
+              Text(
+                timeStr,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: fg.withOpacity(0.85),
+                  height: 1.15,
+                ),
+              ),
+          ],
+        ),
+        bg: bg,
+        fg: fg,
+        margin: EdgeInsets.zero,
+      );
+    }
+
+    // Default one-line badge for other statuses
+    final label = labelForChildStatus(raw);
     return _pill(
       leading: Icon(icon, size: 16, color: fg),
-      text: label,
+      textWidget: Text(label),
       bg: raw == 'assigned' ? const Color.fromARGB(255, 243, 117, 86) : bg,
       fg: raw == 'assigned' ? Colors.white : fg,
       margin: EdgeInsets.zero,
     );
   }
 
-  Widget _expiredBadge() {
+  Widget _expiredBadgeBottom() {
     if (status != 'expired') return const SizedBox.shrink();
     return Container(
       margin: const EdgeInsets.only(top: 6),
@@ -200,11 +403,121 @@ class ChoreCard extends StatelessWidget {
     );
   }
 
+  Widget _expiredBadgeRight() {
+    final date = _formatDate(deadline);
+    final time = _formatTime(deadline);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEEEEE),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFBDBDBD)),
+        boxShadow: const [
+          BoxShadow(blurRadius: 2, offset: Offset(0, 1), color: Color(0x22000000))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Text(
+            'Expired',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF616161),
+            ),
+          ),
+          if (date.isNotEmpty)
+            Text(
+              date,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF616161),
+                height: 1.15,
+              ),
+            ),
+          if (time.isNotEmpty)
+            Text(
+              time,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF616161),
+                height: 1.15,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final role = UserService.currentUser!.role;
     final isChild = role == 'child';
     final childRawStatus = isChild ? getCurrentUserRawStatus() : null;
+
+    final showRightExpiredOnly = rightExpiredOnly && status == 'expired';
+    final hideBottomExpiredForPaid = isChild && childRawStatus == 'paid';
+
+    final isChildCompleteOrVerified =
+        isChild && (childRawStatus == 'complete' || childRawStatus == 'verified');
+
+    // bottom deadline should be hidden when:
+    // - rightExpiredOnly (expired view),
+    // - child's paid,
+    // - we are rendering deadline on the right (either child-active or parent).
+    final showBottomDeadline =
+        !(showRightExpiredOnly && status == 'expired') &&
+        !(isChild && childRawStatus == 'paid') &&
+        !showRightDeadlineForActive &&
+        !showRightDeadline;
+
+    // Should we show the right-side deadline?
+    final shouldShowRightDeadlineChild =
+        showRightDeadlineForActive && isChild && !isChildCompleteOrVerified;
+    final shouldShowRightDeadline =
+        showRightDeadline || shouldShowRightDeadlineChild;
+
+    // Build right-side widget
+    Widget buildRightWidget() {
+      if (showRightExpiredOnly) return _expiredBadgeRight();
+
+      // Parent view (aggregate panel)
+      if (!isChild) {
+        final panel = _parentRightPanel();
+        if (!shouldShowRightDeadline) return panel;
+
+        // Use a neutral FG color under the parent panel
+        const fg = Color(0xFF424242);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            panel,
+            const SizedBox(height: 6),
+            _rightDeadlineLines(fg),
+          ],
+        );
+      }
+
+      // Child view:
+      final badge = _childRightBadge(childRawStatus!);
+
+      if (!shouldShowRightDeadlineChild) return badge;
+
+      final (_, fg, __) = _styleFor(childRawStatus);
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          badge,
+          const SizedBox(height: 6),
+          _rightDeadlineLines(fg),
+        ],
+      );
+    }
 
     return Card(
       color: getCardColor(),
@@ -219,7 +532,7 @@ class ChoreCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // LEFT: title + meta
+              // LEFT: title + description + meta
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -234,6 +547,23 @@ class ChoreCard extends StatelessWidget {
                         color: Color.fromARGB(255, 30, 2, 49),
                       ),
                     ),
+
+                    // description (up to 2 lines)
+                    if (description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        description.trim(),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Color.fromARGB(255, 30, 2, 49),
+                        ),
+                      ),
+                    ],
+
                     const SizedBox(height: 6),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -246,27 +576,37 @@ class ChoreCard extends StatelessWidget {
                             color: Color.fromARGB(255, 30, 2, 49),
                           ),
                         ),
-                        Text(
-                          ' • $formattedDeadline',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Color.fromARGB(255, 30, 2, 49),
+                        if (showBottomDeadline) ...[
+                          Text(
+                            ' • $formattedDeadline',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color.fromARGB(255, 30, 2, 49),
+                            ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
-                    _expiredBadge(), // <-- small pill if expired
+
+                    // Bottom "Expired" badge is suppressed in these cases:
+                    // - rightExpiredOnly mode, OR
+                    // - paid items for child view, OR
+                    // - explicit suppression via prop.
+                    if (!showRightExpiredOnly &&
+                        !hideBottomExpiredForPaid &&
+                        !suppressBottomExpiredPill)
+                      _expiredBadgeBottom(),
                   ],
                 ),
               ),
 
               const SizedBox(width: 12),
 
-              // RIGHT: parent breakdown (from progress only) OR child status badge
+              // RIGHT
               Flexible(
                 flex: 0,
-                child: isChild ? _childRightBadge(childRawStatus!) : _parentRightPanel(),
+                child: buildRightWidget(),
               ),
             ],
           ),

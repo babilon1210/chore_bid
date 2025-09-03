@@ -45,23 +45,24 @@ class _SplashLoaderPageState extends State<SplashLoaderPage> {
   }
 
   void _goToRegister() {
-    Navigator.pushReplacement(
-      context,
+    Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => RoleSelectionPage()),
+      (route) => false,
     );
   }
 
   void _goToHome() {
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => UserService.currentUser!.role == 'parent' ? const HomePage() : const ChildHomePage()),
+    final isParent = UserService.currentUser!.role == 'parent';
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => isParent ? const HomePage() : const ChildHomePage(),
+      ),
+      (route) => false, 
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
-    );
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
