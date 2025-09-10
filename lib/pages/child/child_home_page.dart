@@ -148,9 +148,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
     });
   }
 
-  // ------------------- NEW helpers for nested progress -------------------
+  // ------------------- helpers for nested progress -------------------
 
-  /// Extract a status String from either the new `{status,time}` map or legacy String.
   String? _statusFrom(dynamic v) {
     if (v is String) return v; // legacy shape
     if (v is Map<String, dynamic>) return v['status'] as String?;
@@ -158,32 +157,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
     return null;
   }
 
-  /// Extract the DateTime (if present) from the new `{status,time}` map.
-  DateTime? _timeFrom(dynamic v) {
-    if (v is Map<String, dynamic>) {
-      final t = v['time'];
-      if (t is Timestamp) return t.toDate();
-      if (t is DateTime) return t;
-      if (t is String) {
-        try {
-          return DateTime.parse(t);
-        } catch (_) {}
-      }
-    } else if (v is Map) {
-      final t = v['time'];
-      if (t is Timestamp) return t.toDate();
-      if (t is DateTime) return t;
-    }
-    return null;
-  }
-
-  // ------------- Core helpers -------------
-
   bool _isExpired(Chore c) => c.status == 'expired';
-
-  /// My status for this chore (from nested progress).
   String? _my(Chore c) => _statusFrom(c.progress?[childId]);
-
   bool _assignedToMe(Chore c) => c.assignedTo.contains(childId);
 
   bool _someoneElseAdvanced(Chore c) {
@@ -212,8 +187,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
   }
 
   bool _isMyClaimed(Chore c) => !_isExpired(c) && _my(c) == 'claimed';
-  bool _isMyCompleted(Chore c) => _my(c) == 'complete'; // expired or not
-  bool _isMyVerified(Chore c) => _my(c) == 'verified'; // expired or not
+  bool _isMyCompleted(Chore c) => _my(c) == 'complete';
+  bool _isMyVerified(Chore c) => _my(c) == 'verified';
   bool _isMyPaid(Chore c) => _my(c) == 'paid';
 
   bool _isMyExpiredMissed(Chore c) {
@@ -260,22 +235,19 @@ class _ChildHomePageState extends State<ChildHomePage> {
       _allChores.where(_isMyExpiredMissed).toList()
         ..sort((a, b) => b.deadline.compareTo(a.deadline));
 
-  // ------------- Palette assignment for Available -------------
+  // Palette assignment for Available
   void _assignPaletteIndicesToAvailable(List<Chore> available) {
     final N = ChoreCard.happyColors.length;
     final used = <int>{};
 
-    // Keep already assigned indices for visible available chores and mark as used.
     for (final c in available) {
       final existing = _paletteIndexByChoreId[c.id];
       if (existing != null) used.add(existing);
     }
 
-    // Assign indices to new chores so no repeats until palette is exhausted.
     for (final c in available) {
       if (_paletteIndexByChoreId.containsKey(c.id)) continue;
 
-      // Try to find a free index
       int? free;
       for (int k = 0; k < N; k++) {
         if (!used.contains(k)) {
@@ -284,11 +256,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
         }
       }
 
-      if (free == null) {
-        // Palette exhausted; wrap (spread repeats with a cursor)
-        free = _wrapCursor % N;
-        _wrapCursor++;
-      }
+      free ??= _wrapCursor % N;
+      _wrapCursor++;
 
       _paletteIndexByChoreId[c.id] = free;
       used.add(free);
@@ -297,65 +266,59 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // ------------- Actions -------------
 
-  void _handleChoreTap(Chore chore) {
-    final isMineClaimed = _isMyClaimed(chore);
-    final l = AppLocalizations.of(context);
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title:
-            Text(isMineClaimed ? 'What would you like to do with this chore?' : l.acceptChoreQ),
-        actions: [
-          if (isMineClaimed) ...[
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await ChoreService().markChoreAsComplete(
-                  familyId: UserService.currentUser!.familyId!,
-                  choreId: chore.id,
-                  childId: childId,
-                  time: DateTime.now(),
-                );
-              },
-              child: Text(l.done),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await ChoreService().unclaimChore(
-                  familyId: UserService.currentUser!.familyId!,
-                  choreId: chore.id,
-                  childId: childId,
-                );
-              },
-              child: Text(l.unclaim),
-            ),
-          ] else ...[
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await ChoreService().claimChore(
-                  familyId: UserService.currentUser!.familyId!,
-                  choreId: chore.id,
-                  childId: childId,
-                );
-                // 🎉 Visual + Audio celebration on successful claim
-                if (mounted) {
-                  _burstConfetti();
-                  _sayAwesome();
-                }
-              },
-              child: Text(l.yes),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text(l.no),
-            ),
-          ],
-        ],
-      ),
+  Future<void> _claim(Chore chore) async {
+    await ChoreService().claimChore(
+      familyId: UserService.currentUser!.familyId!,
+      choreId: chore.id,
+      childId: childId,
     );
+    if (mounted) {
+      _burstConfetti();
+      _sayAwesome();
+    }
+  }
+
+  Future<void> _unclaim(Chore chore) async {
+    await ChoreService().unclaimChore(
+      familyId: UserService.currentUser!.familyId!,
+      choreId: chore.id,
+      childId: childId,
+    );
+  }
+
+  Future<void> _markDone(Chore chore) async {
+    await ChoreService().markChoreAsComplete(
+      familyId: UserService.currentUser!.familyId!,
+      choreId: chore.id,
+      childId: childId,
+      time: DateTime.now(),
+    );
+  }
+
+  // NEW: confirmation dialog before marking Done
+  Future<void> _confirmDone(Chore chore) async {
+    final l = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: Text('Have you completed this chore?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(l.no),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(l.yes),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (confirmed) {
+      await _markDone(chore);
+    }
   }
 
   // ------------- UI -------------
@@ -377,7 +340,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
         ),
         centerTitle: true,
       ),
-      // Confetti overlay above content
       body: Stack(
         children: [
           _buildBody(),
@@ -498,133 +460,142 @@ class _ChildHomePageState extends State<ChildHomePage> {
     );
   }
 
-  // ACTIVE tab: show ONLY what's available; if none at all, show single notice.
-  Widget _buildActiveContent() {
-    final l = AppLocalizations.of(context);
+  // ACTIVE tab
+// ACTIVE tab
+Widget _buildActiveContent() {
+  final l = AppLocalizations.of(context);
 
-    final hasAvailable = _available.isNotEmpty;
-    final hasMyWork =
-        _claimed.isNotEmpty || _completedWaiting.isNotEmpty || _verifiedWaiting.isNotEmpty;
+  final hasAvailable = _available.isNotEmpty;
+  final hasMyWork =
+      _claimed.isNotEmpty || _completedWaiting.isNotEmpty || _verifiedWaiting.isNotEmpty;
 
-    // Assign palette indices for currently visible available chores
-    if (hasAvailable) {
-      _assignPaletteIndicesToAvailable(_available);
-    }
-
-    // Nothing to show at all
-    if (!hasAvailable && !hasMyWork) {
-      return ListView(children: [_emptyState(l.noChoresNow)]);
-    }
-
-    final widgets = <Widget>[];
-
-    if (hasAvailable) {
-      widgets.add(
-        Card(
-          color: const Color.fromARGB(255, 251, 213, 184),
-          elevation: 4,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  l.availableChores,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Color.fromARGB(255, 14, 20, 61),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ..._available.map((c) {
-                  final idx = _paletteIndexByChoreId[c.id]!;
-                  return ChoreCard(
-                    title: c.title,
-                    description: c.description,
-                    reward: c.reward,
-                    status: c.status,
-                    isExclusive: c.isExclusive,
-                    assignedTo: c.assignedTo,
-                    progress: c.progress,
-                    deadline: c.deadline,
-                    paletteIndex: idx, // <-- chosen once, reused later
-                    suppressBottomExpiredPill: true, // <-- NEVER show bottom expired in Active tab
-                    showRightDeadlineForActive:
-                        true, // <-- show "Before\nDate\nTime" under right capsule (except complete/verified)
-                    onTap: () => _handleChoreTap(c),
-                  );
-                }),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (hasAvailable && hasMyWork) widgets.add(const SizedBox(height: 16));
-
-    if (hasMyWork) {
-      final sections = <Widget>[];
-      // In Active tab we also suppress the bottom expired pill for these sublists
-      sections.addAll(
-        _sectionIfAny(
-          AppLocalizations.of(context).claimed,
-          _claimed,
-          suppressBottomExpiredPill: true,
-          showRightDeadlineForActive: true,
-        ),
-      );
-      sections.addAll(
-        _sectionIfAny(
-          AppLocalizations.of(context).waitingReview,
-          _completedWaiting,
-          suppressBottomExpiredPill: true,
-          showRightDeadlineForActive: true,
-        ),
-      );
-      sections.addAll(
-        _sectionIfAny(
-          AppLocalizations.of(context).waitingPayment,
-          _verifiedWaiting,
-          suppressBottomExpiredPill: true,
-          showRightDeadlineForActive: true,
-        ),
-      );
-
-      widgets.add(
-        Card(
-          color: const Color.fromARGB(255, 243, 231, 172),
-          elevation: 4,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: sections,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return ListView(children: widgets);
+  if (hasAvailable) {
+    _assignPaletteIndicesToAvailable(_available);
   }
 
-  // HISTORY tab: (Paid, Expired — Missed) and hides empty sections
+  if (!hasAvailable && !hasMyWork) {
+    return ListView(children: [_emptyState(l.noChoresNow)]);
+  }
+
+  final widgets = <Widget>[];
+
+  // --- 1) Child's own chores come FIRST (Claimed, Waiting Review, Waiting Payment) ---
+  if (hasMyWork) {
+    final sections = <Widget>[];
+
+    // Claimed -> Unclaim + Done (with confirmation)
+    sections.addAll(
+      _sectionIfAny(
+        AppLocalizations.of(context).claimed,
+        _claimed,
+        suppressBottomExpiredPill: true,
+        showRightDeadlineForActive: true,
+        actionsBuilder: (c) => (
+          onClaim: null,
+          onUnclaim: () => _unclaim(c),
+          onDone: () => _confirmDone(c),
+        ),
+      ),
+    );
+
+    // Completed -> (no action buttons)
+    sections.addAll(
+      _sectionIfAny(
+        AppLocalizations.of(context).waitingReview,
+        _completedWaiting,
+        suppressBottomExpiredPill: true,
+        showRightDeadlineForActive: true,
+      ),
+    );
+
+    // Verified -> (no action buttons)
+    sections.addAll(
+      _sectionIfAny(
+        AppLocalizations.of(context).waitingPayment,
+        _verifiedWaiting,
+        suppressBottomExpiredPill: true,
+        showRightDeadlineForActive: true,
+      ),
+    );
+
+    widgets.add(
+      Card(
+        color: const Color.fromARGB(255, 243, 231, 172),
+        elevation: 4,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: sections,
+          ),
+        ),
+      ),
+    );
+  }
+
+  if (hasMyWork && hasAvailable) widgets.add(const SizedBox(height: 16));
+
+  // --- 2) Available chores come AFTER the child's own chores ---
+  if (hasAvailable) {
+    widgets.add(
+      Card(
+        color: const Color.fromARGB(255, 251, 213, 184),
+        elevation: 4,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l.availableChores,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Color.fromARGB(255, 14, 20, 61),
+                ),
+              ),
+              const SizedBox(height: 10),
+              ..._available.map((c) {
+                final idx = _paletteIndexByChoreId[c.id]!;
+                return ChoreCard(
+                  title: c.title,
+                  description: c.description,
+                  reward: c.reward,
+                  status: c.status,
+                  isExclusive: c.isExclusive,
+                  assignedTo: c.assignedTo,
+                  progress: c.progress,
+                  deadline: c.deadline,
+                  paletteIndex: idx,
+                  suppressBottomExpiredPill: true,
+                  showRightDeadlineForActive: true,
+                  // Inline actions for available chores
+                  onClaim: () => _claim(c),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  return ListView(children: widgets);
+}
+
+
+  // HISTORY tab
   Widget _buildHistoryContent() {
     final l = AppLocalizations.of(context);
 
     final children = <Widget>[];
-    // Paid behaves normally, but the card shows paid time inside the right capsule
     children.addAll(_sectionIfAny(l.paid, _paid));
-    // Expired — Missed shows only the "Expired" pill on the RIGHT side with date+time,
-    // and the bottom row shows only the price.
     children.addAll(
       _sectionIfAny(l.expiredMissed, _expiredMissed, rightExpiredOnly: true),
     );
@@ -642,6 +613,11 @@ class _ChildHomePageState extends State<ChildHomePage> {
     bool rightExpiredOnly = false,
     bool suppressBottomExpiredPill = false,
     bool showRightDeadlineForActive = false,
+    ({
+      Future<void> Function()? onClaim,
+      Future<void> Function()? onUnclaim,
+      Future<void> Function()? onDone,
+    }) Function(Chore c)? actionsBuilder,
   }) {
     final l = AppLocalizations.of(context);
     if (items.isEmpty) return const [];
@@ -649,24 +625,32 @@ class _ChildHomePageState extends State<ChildHomePage> {
       _subHeader('$title • ${l.countLabel(items.length)}'),
       const SizedBox(height: 8),
       ...items.map(
-        (c) => _tile(
-          c,
-          rightExpiredOnly: rightExpiredOnly,
-          suppressBottomExpiredPill: suppressBottomExpiredPill,
-          showRightDeadlineForActive: showRightDeadlineForActive,
-        ),
+        (c) {
+          final actions = actionsBuilder?.call(c);
+          return _tile(
+            c,
+            rightExpiredOnly: rightExpiredOnly,
+            suppressBottomExpiredPill: suppressBottomExpiredPill,
+            showRightDeadlineForActive: showRightDeadlineForActive,
+            onClaim: actions?.onClaim,
+            onUnclaim: actions?.onUnclaim,
+            onDone: actions?.onDone,
+          );
+        },
       ),
       const SizedBox(height: 16),
     ];
   }
 
-  // Shared chore tile using your ChoreCard + tap handler where relevant.
-  // We pass the remembered paletteIndex here so a chore keeps its color after moving.
+  // Shared chore tile
   Widget _tile(
     Chore c, {
     bool rightExpiredOnly = false,
     bool suppressBottomExpiredPill = false,
     bool showRightDeadlineForActive = false,
+    Future<void> Function()? onClaim,
+    Future<void> Function()? onUnclaim,
+    Future<void> Function()? onDone,
   }) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 8.0),
@@ -683,11 +667,9 @@ class _ChildHomePageState extends State<ChildHomePage> {
           rightExpiredOnly: rightExpiredOnly,
           suppressBottomExpiredPill: suppressBottomExpiredPill,
           showRightDeadlineForActive: showRightDeadlineForActive,
-          onTap: () {
-            if (_isMyClaimed(c) || _isAvailable(c)) {
-              _handleChoreTap(c);
-            }
-          },
+          onClaim: onClaim,
+          onUnclaim: onUnclaim,
+          onDone: onDone,
         ),
       );
 

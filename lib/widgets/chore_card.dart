@@ -40,6 +40,11 @@ class ChoreCard extends StatelessWidget {
   /// (regardless of child/parent role and status). Also suppresses the bottom deadline.
   final bool showRightDeadline;
 
+  /// Inline actions (child view)
+  final Future<void> Function()? onClaim;
+  final Future<void> Function()? onUnclaim;
+  final Future<void> Function()? onDone;
+
   const ChoreCard({
     super.key,
     required this.title,
@@ -56,6 +61,9 @@ class ChoreCard extends StatelessWidget {
     this.suppressBottomExpiredPill = false,
     this.showRightDeadlineForActive = false,
     this.showRightDeadline = false,
+    this.onClaim,
+    this.onUnclaim,
+    this.onDone,
   });
 
   // ---------------- helpers for new/old progress shapes ----------------
@@ -452,6 +460,100 @@ class ChoreCard extends StatelessWidget {
     );
   }
 
+  // ------- Inline action buttons (child view) -------
+  Widget _childActionButtons({required bool isChild}) {
+    if (!isChild) return const SizedBox.shrink();
+    if (status == 'expired') return const SizedBox.shrink();
+
+    final myRaw = getCurrentUserRawStatus();
+    final available = _isAvailableForMe();
+
+    // Available → Claim
+    if (available && onClaim != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Center(
+          child: SizedBox(
+            height: 34,
+            child: ElevatedButton.icon(
+              onPressed: onClaim,
+              icon: const Icon(Icons.how_to_reg, size: 18),
+              label: const Text(
+                'Claim',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.indigo,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Claimed → Unclaim + Done
+    if (myRaw == 'claimed' && (onUnclaim != null || onDone != null)) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Center(
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              if (onUnclaim != null)
+                SizedBox(
+                  height: 34,
+                  child: OutlinedButton(
+                    onPressed: onUnclaim,
+                    child: const Text(
+                      'Unclaim',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.indigo,
+                      side: const BorderSide(color: Colors.indigo, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                  ),
+                ),
+              if (onDone != null)
+                SizedBox(
+                  height: 34,
+                  child: ElevatedButton(
+                    onPressed: onDone,
+                    child: const Text(
+                      'Done',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2E7D32),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // For complete/verified/paid (or unavailable), no buttons
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
     final role = UserService.currentUser!.role;
@@ -526,7 +628,7 @@ class ChoreCard extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
+        onTap: onTap, // not used for child in Active tab anymore
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -588,6 +690,9 @@ class ChoreCard extends StatelessWidget {
                         ],
                       ],
                     ),
+
+                    // Inline action buttons (child)
+                    _childActionButtons(isChild: isChild),
 
                     // Bottom "Expired" badge is suppressed in these cases:
                     // - rightExpiredOnly mode, OR

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:chore_bid/pages/qr_scanner_page.dart';
 import 'package:chore_bid/services/auth_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class RegisterJoinFamilyPage extends StatefulWidget {
   final String role; // 'child' or 'parent'
@@ -27,7 +28,71 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
   String? _qrScanError;
   bool _loading = false;
 
-  Future<void> _scanQrCode() async {
+  // -------------------- CHILD FLOW (new) --------------------
+  Future<void> _scanInviteAndSignIn() async {
+    // Opens your existing scanner page to get raw string back
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const QRScannerPage()),
+    );
+
+    if (result == null) return;
+
+    setState(() {
+      _error = null;
+      _qrScanError = null;
+    });
+
+    try {
+      // Expect a JSON payload like: {"v":1,"type":"invite","code":"<...>"}
+      String? code;
+      try {
+        final decoded = jsonDecode(result);
+        if (decoded is Map && decoded['code'] is String) {
+          code = decoded['code'] as String;
+        }
+      } catch (_) {
+        // Fallback: allow plain code text
+        if (result is String && result.trim().isNotEmpty) {
+          code = result.trim();
+        }
+      }
+
+      if (code == null || code.isEmpty) {
+        throw Exception('Invalid QR. Try again.');
+      }
+
+      setState(() => _loading = true);
+
+      // Redeem the code (Cloud Function creates child if needed, then returns a custom token)
+      final callable = FirebaseFunctions.instance.httpsCallable('redeemCode');
+      final res = await callable.call({'code': code});
+      final data = (res.data is Map) ? Map<String, dynamic>.from(res.data) : <String, dynamic>{};
+      final token = data['customToken'] as String?;
+
+      if (token == null || token.isEmpty) {
+        throw Exception('Could not sign in with this code.');
+      }
+
+      // Sign in with the custom token
+      await FirebaseAuth.instance.signInWithCustomToken(token);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Welcome!')),
+      );
+      Navigator.pushReplacementNamed(context, '/splash');
+    } on FirebaseFunctionsException catch (e) {
+      setState(() => _error = e.message ?? e.code);
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // -------------------- OLD (second parent) FLOW (unchanged UI) --------------------
+  Future<void> _scanFamilyQrToGetFamilyId() async {
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const QRScannerPage()),
@@ -35,14 +100,12 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
 
     if (result != null) {
       try {
-        // Try a few formats: raw text or JSON
+        // Accept either "familyId: ABC123" OR {"familyId":"ABC123"}
         String? id;
-        // pattern like: "familyId: ABC123"
         final match = RegExp(r'familyId[:=]\s*([a-zA-Z0-9_-]+)').firstMatch(result);
         if (match != null) {
           id = match.group(1);
         } else {
-          // maybe JSON
           final decoded = jsonDecode(result);
           if (decoded is Map && decoded['familyId'] is String) {
             id = decoded['familyId'] as String;
@@ -50,7 +113,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
         }
 
         if (id == null || id.isEmpty) {
-          throw Exception("familyId not found in result");
+          throw Exception("familyId not found in QR");
         }
 
         setState(() {
@@ -84,11 +147,11 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
   }
 
-  Future<void> _register() async {
+  Future<void> _registerSecondParent() async {
     if (!_formKey.currentState!.validate()) return;
 
     if (familyId == null) {
-      setState(() => _qrScanError = "Please scan a parent's QR code first.");
+      setState(() => _qrScanError = "Please scan the family QR code first.");
       return;
     }
 
@@ -98,22 +161,17 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
 
     try {
-      String email = _emailController.text.trim();
-      if (widget.role == 'child' && email.isEmpty) {
-        email = 'child_${DateTime.now().millisecondsSinceEpoch}@chorbit.email';
-      }
-
       final user = await _authService.register(
         name: _nameController.text.trim(),
-        email: email,
+        email: _emailController.text.trim(),
         password: _passwordController.text,
-        role: widget.role,
+        role: 'parent',
       );
 
       if (user != null && mounted) {
         final callable = FirebaseFunctions.instance.httpsCallable('createUserWithFamily');
         await callable.call({
-          'role': widget.role,
+          'role': 'parent',
           'name': _nameController.text.trim(),
           'familyId': familyId,
         });
@@ -123,20 +181,12 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
-  Widget _qrSection() {
-    // If we already have a familyId, hide the scan button and show a success chip
+  // -------------------- UI --------------------
+  Widget _secondParentQrSection() {
     if (familyId != null) {
       return Row(
         children: [
@@ -167,24 +217,29 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
             ),
           ),
           const SizedBox(width: 8),
-          TextButton(
-            onPressed: _clearScan, // optional “Change” to rescan
-            child: const Text('Change'),
-          ),
+          TextButton(onPressed: _clearScan, child: const Text('Change')),
         ],
       );
     }
 
-    // No family yet → show scan button
     return ElevatedButton(
-      onPressed: _scanQrCode,
-      child: const Text('Scan Parent QR'),
+      onPressed: _scanFamilyQrToGetFamilyId,
+      child: const Text('Scan Family QR'),
     );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final isChild = widget.role == 'child';
+
     return Directionality(
       textDirection: TextDirection.ltr,
       child: Scaffold(
@@ -193,57 +248,83 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           padding: const EdgeInsets.all(16.0),
           child: _loading
               ? const Center(child: CircularProgressIndicator())
-              : Form(
-                  key: _formKey,
-                  child: ListView(
-                    children: [
-                      TextFormField(
-                        controller: _nameController,
-                        decoration: const InputDecoration(labelText: 'Name'),
-                        validator: (val) => val == null || val.isEmpty ? 'Enter your name' : null,
-                      ),
-                      TextFormField(
-                        controller: _emailController,
-                        decoration: const InputDecoration(labelText: 'Email'),
-                        keyboardType: TextInputType.emailAddress,
-                        validator: (val) {
-                          if (!isChild && (val == null || !val.contains('@'))) {
-                            return 'Valid email required';
-                          }
-                          return null;
-                        },
-                      ),
-                      TextFormField(
-                        controller: _passwordController,
-                        decoration: const InputDecoration(labelText: 'Password'),
-                        obscureText: true,
-                        validator: (val) => val == null || val.length < 6 ? 'Too short' : null,
-                      ),
-                      const SizedBox(height: 10),
-      
-                      // QR section (button OR success box)
-                      _qrSection(),
-      
-                      if (_qrScanError != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8.0),
-                          child: Text(_qrScanError!, style: const TextStyle(color: Colors.red)),
-                        ),
-                      const SizedBox(height: 20),
-      
-                      ElevatedButton(
-                        onPressed: _register,
-                        child: const Text('Sign Up'),
-                      ),
-                      if (_error != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 12.0),
-                          child: Text(_error!, style: const TextStyle(color: Colors.red)),
-                        ),
-                    ],
-                  ),
-                ),
+              : (isChild ? _buildChildBody() : _buildSecondParentBody()),
         ),
+      ),
+    );
+  }
+
+  // --------- New CHILD signup: only scan invite QR ---------
+  Widget _buildChildBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        const Text(
+          "Ask your parent to open your Sign-up QR and scan it here.",
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton.icon(
+          onPressed: _scanInviteAndSignIn,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: const Text('Scan My Sign-up QR'),
+          style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(_error!, style: const TextStyle(color: Colors.red)),
+        ],
+      ],
+    );
+  }
+
+  // --------- Existing SECOND PARENT join flow (unchanged) ---------
+  Widget _buildSecondParentBody() {
+    return Form(
+      key: _formKey,
+      child: ListView(
+        children: [
+          TextFormField(
+            controller: _nameController,
+            decoration: const InputDecoration(labelText: 'Name'),
+            validator: (val) => val == null || val.isEmpty ? 'Enter your name' : null,
+          ),
+          TextFormField(
+            controller: _emailController,
+            decoration: const InputDecoration(labelText: 'Email'),
+            keyboardType: TextInputType.emailAddress,
+            validator: (val) {
+              if (val == null || !val.contains('@')) {
+                return 'Valid email required';
+              }
+              return null;
+            },
+          ),
+          TextFormField(
+            controller: _passwordController,
+            decoration: const InputDecoration(labelText: 'Password'),
+            obscureText: true,
+            validator: (val) => val == null || val.length < 6 ? 'Too short' : null,
+          ),
+          const SizedBox(height: 10),
+          _secondParentQrSection(),
+          if (_qrScanError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Text(_qrScanError!, style: const TextStyle(color: Colors.red)),
+            ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: _registerSecondParent,
+            child: const Text('Sign Up'),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12.0),
+              child: Text(_error!, style: const TextStyle(color: Colors.red)),
+            ),
+        ],
       ),
     );
   }
