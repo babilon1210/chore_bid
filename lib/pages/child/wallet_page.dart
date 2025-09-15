@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -7,6 +9,9 @@ import 'package:google_fonts/google_fonts.dart';
 
 // 🔤 Localizations
 import 'package:chore_bid/l10n/generated/app_localizations.dart';
+
+// 🔧 Family currency
+import '../../services/family_service.dart';
 
 enum WalletTab { pending, paid }
 enum RangePreset { week, month, year, custom }
@@ -20,7 +25,7 @@ class ChildWalletPage extends StatefulWidget {
 
 class _ChildWalletPageState extends State<ChildWalletPage> {
   final _df = DateFormat.yMMMd();
-  WalletTab _tab = WalletTab.pending;
+  WalletTab _tab = WalletTab.paid;
 
   String get _uid => UserService.currentUser!.uid;
 
@@ -59,11 +64,18 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
     return null;
   }
 
-  // ------------- amount parsing -------------
+  // ----------------- currency -----------------
 
-  int _rewardILSFor(Chore c) {
+  final _familyService = FamilyService();
+  String _currency = r'$'; // default fallback
+  StreamSubscription<String?>? _currencySub;
+
+  // ------------- amount parsing / formatting -------------
+
+  // Parse the reward string to a rounded integer amount (keeps current behavior)
+  int _rewardFor(Chore c) {
     var s = (c.reward).trim();
-    // keep digits and separators, remove everything else
+    // keep digits and separators, remove everything else (symbols/letters)
     s = s.replaceAll(RegExp(r'[^0-9\.,]'), '');
     if (s.isEmpty) return 0;
     if (s.contains(',') && !s.contains('.')) {
@@ -72,13 +84,13 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
       s = s.replaceAll(',', ''); // "1,234.50" -> "1234.50"
     }
     final v = double.tryParse(s) ?? 0.0;
-    return v.round(); // round to whole ILS
+    return v.round(); // keep same whole-number behavior
   }
 
-  int _sumRewardsILS(List<Chore> chores) =>
-      chores.fold(0, (sum, c) => sum + _rewardILSFor(c));
+  int _sumRewards(List<Chore> chores) =>
+      chores.fold(0, (sum, c) => sum + _rewardFor(c));
 
-  String _ils(int amount) => '₪$amount';
+  String _money(int amount) => '$_currency$amount';
 
   // ------------- date-range helpers -------------
 
@@ -165,7 +177,9 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
 
   // PENDING in selected range = verified (waiting for payment) by verified time
   List<Chore> get _pendingInRange =>
-      _allChores.where((c) => _myStatus(c) == 'verified' && _inSelectedRange(_myTime(c))).toList()
+      _allChores
+          .where((c) => _myStatus(c) == 'verified' && _inSelectedRange(_myTime(c)))
+          .toList()
         ..sort((a, b) {
           final ta = _myTime(a) ?? a.deadline;
           final tb = _myTime(b) ?? b.deadline;
@@ -174,7 +188,9 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
 
   // PAID in selected range = paid status by paid time
   List<Chore> get _paidInRange =>
-      _allChores.where((c) => _myStatus(c) == 'paid' && _inSelectedRange(_myTime(c))).toList()
+      _allChores
+          .where((c) => _myStatus(c) == 'paid' && _inSelectedRange(_myTime(c)))
+          .toList()
         ..sort((a, b) {
           final ta = _myTime(a) ?? a.deadline;
           final tb = _myTime(b) ?? b.deadline;
@@ -185,9 +201,20 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
   void initState() {
     super.initState();
 
-    // SECOND LISTENER: recent expired chores (index-free; filtered client-side)
+    // Listen for family currency (live)
     final familyId = UserService.currentUser?.familyId;
-    if (familyId != null) {
+    if (familyId != null && familyId.isNotEmpty) {
+      _familyService.listenToFamily(familyId);
+      // seed immediate value if already cached
+      _currency = _familyService.currentCurrency;
+      _currencySub = _familyService.currencyStream.listen((c) {
+        if (!mounted) return;
+        if (c != null && c.isNotEmpty && c != _currency) {
+          setState(() => _currency = c);
+        }
+      });
+
+      // SECOND LISTENER: recent expired chores (index-free; filtered client-side)
       final cutoff = DateTime.now().subtract(const Duration(days: 60));
       FirebaseFirestore.instance
           .collection('families')
@@ -210,6 +237,13 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
         }
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _currencySub?.cancel();
+    _familyService.dispose();
+    super.dispose();
   }
 
   // ----------------- FILTER UI -----------------
@@ -239,15 +273,14 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
             ),
             title: Text(
               title,
-              style: TextStyle(
+              style: const TextStyle(
                 fontWeight: FontWeight.w700,
-                color: const Color(0xFF0B102F),
+                color: Color(0xFF0B102F),
               ),
             ),
             subtitle: subtitle == null ? null : Text(subtitle),
-            trailing: selected
-                ? const Icon(Icons.check_circle, color: Colors.indigo)
-                : null,
+            trailing:
+                selected ? const Icon(Icons.check_circle, color: Colors.indigo) : null,
             onTap: () async {
               if (value == RangePreset.custom) {
                 Navigator.pop(ctx); // close sheet before date picker
@@ -385,8 +418,8 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
 
-    final waitingAmount = _sumRewardsILS(_pendingInRange);
-    final paidAmount = _sumRewardsILS(_paidInRange);
+    final waitingAmount = _sumRewards(_pendingInRange);
+    final paidAmount = _sumRewards(_paidInRange);
 
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 244, 190, 71),
@@ -405,7 +438,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
                 Expanded(
                   child: _statCard(
                     label: l.waitingPayment,
-                    value: _ils(waitingAmount),
+                    value: _money(waitingAmount),
                     icon: Icons.hourglass_bottom_rounded,
                     bg: const Color.fromARGB(255, 255, 159, 132),
                     selected: _tab == WalletTab.pending,
@@ -416,7 +449,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
                 Expanded(
                   child: _statCard(
                     label: 'Paid',
-                    value: _ils(paidAmount),
+                    value: _money(paidAmount),
                     icon: Icons.payments_rounded,
                     bg: const Color(0xFFB6F6A8),
                     selected: _tab == WalletTab.paid,
@@ -438,7 +471,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
                         final t = _myTime(c) ?? c.deadline;
                         return _walletTile(
                           title: c.title,
-                          amount: _ils(_rewardILSFor(c)),
+                          amount: _money(_rewardFor(c)),
                           statusLabel: 'Awaiting payment',
                           statusColor: const Color(0xFF1E88E5),
                           date: _df.format(t),
@@ -455,7 +488,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
                         final t = _myTime(c) ?? c.deadline; // paid time expected
                         return _walletTile(
                           title: c.title,
-                          amount: _ils(_rewardILSFor(c)),
+                          amount: _money(_rewardFor(c)),
                           statusLabel: l.paid,
                           statusColor: const Color(0xFF2E7D32),
                           date: _df.format(t),

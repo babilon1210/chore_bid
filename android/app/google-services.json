@@ -12,7 +12,20 @@
           "package_name": "com.eitan.chorebid"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "605689934779-930lt91cggu5f1b9hut43qs0361f8m13.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.eitan.chorebid",
+            "certificate_hash": "e2240b31be2157923bd461caf43914f718356fe9"
+          }
+        },
+        {
+          "client_id": "605689934779-jlugb09mq4hj5deo0r7d5d8nk0bjds8r.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAso8Xd4i29wRtEjZVZ1zpkh18QTFipQt8"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "605689934779-jlugb09mq4hj5deo0r7d5d8nk0bjds8r.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "605689934779-54aec433eiptkoer6rhkvu46pgho3ras.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.eitan.chorebid"
+              }
+            }
+          ]
         }
       }
     }

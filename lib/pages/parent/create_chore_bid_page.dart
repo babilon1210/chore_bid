@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:chore_bid/pages/parent/parent_settings_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // digits-only for reward
 import '../../services/chore_service.dart';
@@ -28,21 +30,51 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
   bool _isExclusive = true;
   bool _isSubmitting = false;
 
+  // Currency from FamilyService (live)
+  String _currency = r'$';
+  StreamSubscription<String?>? _currencySub;
+
+  bool get _hasChildren => _childNamesById.isNotEmpty;
+  bool get _hasAtLeastOneSelection => _selectedChildren.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
+    // Begin listening to the family's document so we can read currency
+    if (widget.user.familyId != null && widget.user.familyId!.isNotEmpty) {
+      _familyService.listenToFamily(widget.user.familyId!);
+      // Seed with whatever the service currently has, then keep it live
+      _currency = _familyService.currentCurrency;
+      _currencySub = _familyService.currencyStream.listen((c) {
+        if (!mounted) return;
+        setState(() {
+          _currency = (c == null || c.isEmpty) ? _currency : c;
+        });
+      });
+    }
     _loadChildren();
   }
 
   Future<void> _loadChildren() async {
-    final namesMap =
-        await _familyService.getChildrenNamesMap(widget.user.familyId!);
-
-    if (mounted) {
-      setState(() {
-        _childNamesById = namesMap;
-      });
+    final fid = widget.user.familyId;
+    if (fid == null || fid.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _childNamesById = {};
+          _selectedChildren.clear();
+        });
+      }
+      return;
     }
+
+    final namesMap = await _familyService.getChildrenNamesMap(fid);
+    if (!mounted) return;
+
+    setState(() {
+      _childNamesById = namesMap;
+      // Remove any selections that no longer exist
+      _selectedChildren.removeWhere((id) => !_childNamesById.containsKey(id));
+    });
   }
 
   void _toggleSelectAll(bool selectAll) {
@@ -74,7 +106,8 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
 
     // If picking "today", make suggested time at least 30 mins ahead for convenience.
     final suggested = now.add(const Duration(minutes: 31));
-    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
+    final isToday =
+        date.year == now.year && date.month == now.month && date.day == now.day;
 
     final initialTime = isToday
         ? TimeOfDay(hour: suggested.hour, minute: suggested.minute)
@@ -87,12 +120,16 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
 
     if (time == null) return;
 
-    final picked = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final picked =
+        DateTime(date.year, date.month, date.day, time.hour, time.minute);
 
     if (!_isDeadlineValid(picked)) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please choose a deadline at least 30 minutes from now.')),
+        const SnackBar(
+          content:
+              Text('Please choose a deadline at least 30 minutes from now.'),
+        ),
       );
       return; // do not set invalid deadline
     }
@@ -102,10 +139,43 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
     });
   }
 
+  Future<void> _goToAddChild() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const ParentSettingsPage(openAddChildOnOpen: true),
+      ),
+    );
+    // Refresh children when coming back
+    await _loadChildren();
+
+    if (!_hasChildren && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No children were added. Please add a child to proceed.'),
+        ),
+      );
+    }
+  }
+
   Future<void> _submitForm() async {
     if (_isSubmitting) return;
 
-    // Validate form fields first
+    // Hard validations related to children
+    if (!_hasChildren) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Add a child first to create a chore.')),
+      );
+      return;
+    }
+    if (!_hasAtLeastOneSelection) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select at least one child')),
+      );
+      return;
+    }
+
+    // Validate form fields
     final formOk = _formKey.currentState!.validate();
 
     // Validate deadline presence + rules
@@ -116,7 +186,9 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
     }
     if (!_isDeadlineValid(_selectedDeadline!)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Deadline must be at least 30 minutes from now.')),
+        const SnackBar(
+          content: Text('Deadline must be at least 30 minutes from now.'),
+        ),
       );
       return;
     }
@@ -153,6 +225,7 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
 
   @override
   void dispose() {
+    _currencySub?.cancel();
     _titleController.dispose();
     _descriptionController.dispose();
     _rewardController.dispose();
@@ -165,6 +238,9 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
     final deadlineLabel = _selectedDeadline == null
         ? 'Pick a deadline'
         : 'Deadline: ${_selectedDeadline!.toLocal().toString().substring(0, 16)}';
+
+    final canSubmit =
+        !_isSubmitting && _hasChildren && _hasAtLeastOneSelection;
 
     return Scaffold(
       appBar: AppBar(title: const Text('New Chore Bid')),
@@ -192,9 +268,10 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                   labelText: 'Chore Description',
                   border: OutlineInputBorder(),
                 ),
-                validator: (value) => value == null || value.isEmpty
-                    ? 'Please enter a description'
-                    : null,
+                validator: (value) =>
+                    value == null || value.isEmpty
+                        ? 'Please enter a description'
+                        : null,
               ),
               const SizedBox(height: 16),
 
@@ -209,11 +286,12 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
                 ],
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Reward',
                   hintText: 'Numbers only',
-                  border: OutlineInputBorder(),
-                  prefixText: '₪',
+                  border: const OutlineInputBorder(),
+                  // Use currency from FamilyService instead of hard-coding
+                  prefixText: _currency,
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -252,7 +330,8 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
               ),
               const SizedBox(height: 16),
 
-              if (_childNamesById.isNotEmpty) ...[
+              // ---------- Children selection ----------
+              if (_hasChildren) ...[
                 Row(
                   children: [
                     Checkbox(
@@ -282,15 +361,42 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                           },
                   );
                 }).toList(),
+                if (!_hasAtLeastOneSelection)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 8, bottom: 4),
+                    child: Text(
+                      'Select at least one child',
+                      style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+              ] else ...[
+                // When no children exist, show a slim inline prompt as well
+                Card(
+                  color: const Color.fromARGB(255, 255, 238, 186),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: ListTile(
+                    leading: const Icon(Icons.info_outline),
+                    title: const Text('You have no children to assign yet'),
+                    subtitle: const Text('Add a child to create a chore'),
+                    trailing: TextButton(
+                      onPressed: _isSubmitting ? null : _goToAddChild,
+                      child: const Text('Add Child'),
+                    ),
+                  ),
+                ),
               ],
+              // -----------------------------------------
 
               const SizedBox(height: 32),
 
-              // ----- Submit button with loading state -----
+              // ----- Submit button with loading + validation state -----
               SizedBox(
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submitForm,
+                  onPressed: canSubmit ? _submitForm : null,
                   child: _isSubmitting
                       ? Row(
                           mainAxisAlignment: MainAxisAlignment.center,

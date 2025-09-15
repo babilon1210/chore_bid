@@ -1,4 +1,7 @@
 // lib/pages/child/home_page.dart
+import 'dart:async';
+
+import 'package:chore_bid/pages/child/child_settings_page.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -10,6 +13,9 @@ import '../../models/chore_model.dart';
 import '../../widgets/chore_card.dart';
 import 'wallet_page.dart';
 
+// ⤴️ View-only details page
+import 'package:chore_bid/pages/parent/chore_info_page.dart';
+
 // Confetti
 import 'package:confetti/confetti.dart';
 
@@ -18,6 +24,9 @@ import 'package:flutter_tts/flutter_tts.dart';
 
 // 🔤 Localizations (your generated file)
 import 'package:chore_bid/l10n/generated/app_localizations.dart';
+
+// 🔧 Family currency
+import '../../services/family_service.dart';
 
 enum ChildTab { active, history }
 
@@ -45,6 +54,11 @@ class _ChildHomePageState extends State<ChildHomePage> {
   late final FlutterTts _tts;
   bool _ttsReady = false;
 
+  // ---------- Currency (live from FamilyService) ----------
+  final FamilyService _familyCurrencySvc = FamilyService();
+  String _currency = r'$';
+  StreamSubscription<String?>? _currencySub;
+
   // ---------- Palette memory (id -> palette index) ----------
   // This keeps the color chosen while "Available" and reuses it after the chore moves to "Claimed", etc.
   final Map<String, int> _paletteIndexByChoreId = {};
@@ -64,6 +78,16 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
     final familyId = UserService.currentUser?.familyId;
     if (familyId != null) {
+      // --- Currency: keep child's currency symbol live ---
+      _familyCurrencySvc.listenToFamily(familyId);
+      _currency = _familyCurrencySvc.currentCurrency;
+      _currencySub = _familyCurrencySvc.currencyStream.listen((c) {
+        if (!mounted) return;
+        if (c != null && c.isNotEmpty && c != _currency) {
+          setState(() => _currency = c);
+        }
+      });
+
       // active/non-expired chores
       ChoreService().listenToChores(familyId).listen((_) {
         if (mounted) setState(() {});
@@ -130,6 +154,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
   void dispose() {
     _confettiCtrl.dispose();
     _tts.stop();
+    _currencySub?.cancel();
+    _familyCurrencySvc.dispose();
     super.dispose();
   }
 
@@ -160,6 +186,19 @@ class _ChildHomePageState extends State<ChildHomePage> {
   bool _isExpired(Chore c) => c.status == 'expired';
   String? _my(Chore c) => _statusFrom(c.progress?[childId]);
   bool _assignedToMe(Chore c) => c.assignedTo.contains(childId);
+
+  // For reading the timestamp stored alongside progress (same shape as wallet page)
+  Map<String, dynamic>? _myProgressMap(Chore c) {
+    final raw = c.progress?[childId];
+    return raw is Map<String, dynamic> ? raw : null;
+  }
+
+  DateTime? _myTime(Chore c) {
+    final t = _myProgressMap(c)?['time'];
+    if (t is Timestamp) return t.toDate();
+    if (t is DateTime) return t;
+    return null;
+  }
 
   bool _someoneElseAdvanced(Chore c) {
     final prog = c.progress;
@@ -234,6 +273,33 @@ class _ChildHomePageState extends State<ChildHomePage> {
   List<Chore> get _expiredMissed =>
       _allChores.where(_isMyExpiredMissed).toList()
         ..sort((a, b) => b.deadline.compareTo(a.deadline));
+
+  // ---------- Reward parsing / balance helpers ----------
+  int _rewardFor(Chore c) {
+    var s = (c.reward).trim();
+    // keep digits and separators, remove everything else (symbols/letters)
+    s = s.replaceAll(RegExp(r'[^0-9\.,]'), '');
+    if (s.isEmpty) return 0;
+    if (s.contains(',') && !s.contains('.')) {
+      s = s.replaceAll(',', '.'); // "30,5" -> "30.5"
+    } else if (s.contains(',') && s.contains('.')) {
+      s = s.replaceAll(',', ''); // "1,234.50" -> "1234.50"
+    }
+    final v = double.tryParse(s) ?? 0.0;
+    return v.round(); // keep same whole-number behavior
+  }
+
+  bool _inThisMonth(DateTime? t) {
+    if (t == null) return false;
+    final now = DateTime.now();
+    return t.year == now.year && t.month == now.month;
+  }
+
+  int get _paidThisMonthAmount => _allChores
+      .where((c) => _isMyPaid(c) && _inThisMonth(_myTime(c)))
+      .fold(0, (sum, c) => sum + _rewardFor(c));
+
+  String _money(int amount) => '$_currency$amount';
 
   // Palette assignment for Available
   void _assignPaletteIndicesToAvailable(List<Chore> available) {
@@ -321,6 +387,14 @@ class _ChildHomePageState extends State<ChildHomePage> {
     }
   }
 
+  Future<void> _openInfo(Chore chore) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ChoreInfoPage(chore: chore)),
+    );
+    if (mounted) setState(() {}); // refresh after returning
+  }
+
   // ------------- UI -------------
 
   @override
@@ -385,7 +459,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
             icon: Icon(Icons.account_balance_wallet),
             label: 'Wallet',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
     );
@@ -398,6 +472,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             children: [
+              _balanceCard(), // ← TOP: this month's paid balance
+              const SizedBox(height: 12),
               _topTabs(),
               const SizedBox(height: 12),
               Expanded(
@@ -409,10 +485,94 @@ class _ChildHomePageState extends State<ChildHomePage> {
       case 1:
         return const ChildWalletPage();
       case 2:
-        return const Center(child: Text('Profile (Coming soon)'));
+        return const ChildSettingsPage();
       default:
         return const SizedBox();
     }
+  }
+
+  // Prominent balance card at the very top.
+  // Shows ONLY paid chores for the current month.
+  Widget _balanceCard() {
+    final amount = _paidThisMonthAmount;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _selectedIndex = 1), // jump to Wallet
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            // light → mid green gradient to celebrate earnings
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFFE9F8E7), // very light green
+                Color(0xFFB6F6A8), // app's paid green
+              ],
+            ),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const [
+              BoxShadow(
+                blurRadius: 8,
+                offset: Offset(0, 4),
+                color: Color(0x33000000),
+              ),
+            ],
+            border: Border.all(color: Colors.white70, width: 1),
+          ),
+          child: Row(
+            children: [
+              // Icon badge
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.92),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.savings_rounded, color: Color(0xFF0B102F)),
+              ),
+              const SizedBox(width: 12),
+              // Labels
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'This months balance',
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF0B102F),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Amount + chevron
+              Row(
+                children: [
+                  Text(
+                    _money(amount),
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0B102F),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.chevron_right_rounded, color: Color(0xFF0B102F)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // Top two-tab control
@@ -461,134 +621,132 @@ class _ChildHomePageState extends State<ChildHomePage> {
   }
 
   // ACTIVE tab
-// ACTIVE tab
-Widget _buildActiveContent() {
-  final l = AppLocalizations.of(context);
+  Widget _buildActiveContent() {
+    final l = AppLocalizations.of(context);
 
-  final hasAvailable = _available.isNotEmpty;
-  final hasMyWork =
-      _claimed.isNotEmpty || _completedWaiting.isNotEmpty || _verifiedWaiting.isNotEmpty;
+    final hasAvailable = _available.isNotEmpty;
+    final hasMyWork =
+        _claimed.isNotEmpty || _completedWaiting.isNotEmpty || _verifiedWaiting.isNotEmpty;
 
-  if (hasAvailable) {
-    _assignPaletteIndicesToAvailable(_available);
-  }
+    if (hasAvailable) {
+      _assignPaletteIndicesToAvailable(_available);
+    }
 
-  if (!hasAvailable && !hasMyWork) {
-    return ListView(children: [_emptyState(l.noChoresNow)]);
-  }
+    if (!hasAvailable && !hasMyWork) {
+      return ListView(children: [_emptyState(l.noChoresNow)]);
+    }
 
-  final widgets = <Widget>[];
+    final widgets = <Widget>[];
 
-  // --- 1) Child's own chores come FIRST (Claimed, Waiting Review, Waiting Payment) ---
-  if (hasMyWork) {
-    final sections = <Widget>[];
+    // --- 1) Child's own chores come FIRST (Claimed, Waiting Review, Waiting Payment) ---
+    if (hasMyWork) {
+      final sections = <Widget>[];
 
-    // Claimed -> Unclaim + Done (with confirmation)
-    sections.addAll(
-      _sectionIfAny(
-        AppLocalizations.of(context).claimed,
-        _claimed,
-        suppressBottomExpiredPill: true,
-        showRightDeadlineForActive: true,
-        actionsBuilder: (c) => (
-          onClaim: null,
-          onUnclaim: () => _unclaim(c),
-          onDone: () => _confirmDone(c),
-        ),
-      ),
-    );
-
-    // Completed -> (no action buttons)
-    sections.addAll(
-      _sectionIfAny(
-        AppLocalizations.of(context).waitingReview,
-        _completedWaiting,
-        suppressBottomExpiredPill: true,
-        showRightDeadlineForActive: true,
-      ),
-    );
-
-    // Verified -> (no action buttons)
-    sections.addAll(
-      _sectionIfAny(
-        AppLocalizations.of(context).waitingPayment,
-        _verifiedWaiting,
-        suppressBottomExpiredPill: true,
-        showRightDeadlineForActive: true,
-      ),
-    );
-
-    widgets.add(
-      Card(
-        color: const Color.fromARGB(255, 243, 231, 172),
-        elevation: 4,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: sections,
+      // Claimed -> Unclaim + Done (with confirmation)
+      sections.addAll(
+        _sectionIfAny(
+          AppLocalizations.of(context).claimed,
+          _claimed,
+          suppressBottomExpiredPill: true,
+          showRightDeadlineForActive: true,
+          actionsBuilder: (c) => (
+            onClaim: null,
+            onUnclaim: () => _unclaim(c),
+            onDone: () => _confirmDone(c),
           ),
         ),
-      ),
-    );
-  }
+      );
 
-  if (hasMyWork && hasAvailable) widgets.add(const SizedBox(height: 16));
-
-  // --- 2) Available chores come AFTER the child's own chores ---
-  if (hasAvailable) {
-    widgets.add(
-      Card(
-        color: const Color.fromARGB(255, 251, 213, 184),
-        elevation: 4,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+      // Completed -> (no action buttons)
+      sections.addAll(
+        _sectionIfAny(
+          AppLocalizations.of(context).waitingReview,
+          _completedWaiting,
+          suppressBottomExpiredPill: true,
+          showRightDeadlineForActive: true,
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                l.availableChores,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: Color.fromARGB(255, 14, 20, 61),
+      );
+
+      // Verified -> (no action buttons)
+      sections.addAll(
+        _sectionIfAny(
+          AppLocalizations.of(context).waitingPayment,
+          _verifiedWaiting,
+          suppressBottomExpiredPill: true,
+          showRightDeadlineForActive: true,
+        ),
+      );
+
+      widgets.add(
+        Card(
+          color: const Color.fromARGB(255, 243, 231, 172),
+          elevation: 4,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: sections,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (hasMyWork && hasAvailable) widgets.add(const SizedBox(height: 16));
+
+    // --- 2) Available chores come AFTER the child's own chores ---
+    if (hasAvailable) {
+      widgets.add(
+        Card(
+          color: const Color.fromARGB(255, 251, 213, 184),
+          elevation: 4,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l.availableChores,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Color.fromARGB(255, 14, 20, 61),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              ..._available.map((c) {
-                final idx = _paletteIndexByChoreId[c.id]!;
-                return ChoreCard(
-                  title: c.title,
-                  description: c.description,
-                  reward: c.reward,
-                  status: c.status,
-                  isExclusive: c.isExclusive,
-                  assignedTo: c.assignedTo,
-                  progress: c.progress,
-                  deadline: c.deadline,
-                  paletteIndex: idx,
-                  suppressBottomExpiredPill: true,
-                  showRightDeadlineForActive: true,
-                  // Inline actions for available chores
-                  onClaim: () => _claim(c),
-                );
-              }),
-            ],
+                const SizedBox(height: 10),
+                ..._available.map((c) {
+                  final idx = _paletteIndexByChoreId[c.id]!;
+                  return ChoreCard(
+                    title: c.title,
+                    description: c.description,
+                    reward: c.reward,
+                    status: c.status,
+                    isExclusive: c.isExclusive,
+                    assignedTo: c.assignedTo,
+                    progress: c.progress,
+                    deadline: c.deadline,
+                    paletteIndex: idx,
+                    suppressBottomExpiredPill: true,
+                    showRightDeadlineForActive: true,
+                    onTap: () => _openInfo(c),            // ← open details (view-only)
+                    onClaim: () => _claim(c),
+                  );
+                }),
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
+
+    return ListView(children: widgets);
   }
-
-  return ListView(children: widgets);
-}
-
 
   // HISTORY tab
   Widget _buildHistoryContent() {
@@ -667,6 +825,7 @@ Widget _buildActiveContent() {
           rightExpiredOnly: rightExpiredOnly,
           suppressBottomExpiredPill: suppressBottomExpiredPill,
           showRightDeadlineForActive: showRightDeadlineForActive,
+          onTap: () => _openInfo(c),   // ← open details (view-only)
           onClaim: onClaim,
           onUnclaim: onUnclaim,
           onDone: onDone,

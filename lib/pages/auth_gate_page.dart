@@ -1,4 +1,5 @@
 import 'package:chore_bid/pages/sign_up/role_selection_page.dart';
+import 'package:chore_bid/pages/sign_up/sign_in_mode_page.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'sign_up/sign_in_page.dart';
@@ -82,14 +83,14 @@ class _AuthGatePageState extends State<AuthGatePage> {
                               MaterialPageRoute(builder: (_) => const RoleSelectionPage()),
                             );
                           },
-                          child: const Text('Sign up or Join a Family'),
+                          child: const Text('Sign up'),
                         ),
                         const SizedBox(height: 16),
                         TextButton(
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => const SignInPage()),
+                              MaterialPageRoute(builder: (_) => const SignInModePage()),
                             );
                           },
                           child: const Text('Already have an account? Sign In'),

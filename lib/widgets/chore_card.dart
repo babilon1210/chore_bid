@@ -1,6 +1,7 @@
 // lib/widgets/chore_card.dart
 import 'dart:math';
 import 'package:chore_bid/services/user_service.dart';
+import 'package:chore_bid/services/family_service.dart'; // <-- added
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -582,6 +583,9 @@ class ChoreCard extends StatelessWidget {
     final shouldShowRightDeadline =
         showRightDeadline || shouldShowRightDeadlineChild;
 
+    // Currency from FamilyService (fallback to "$" if not yet loaded)
+    final currencySymbol = FamilyService().currentCurrency;
+
     // Build right-side widget
     Widget buildRightWidget() {
       if (showRightExpiredOnly) return _expiredBadgeRight();
@@ -671,7 +675,7 @@ class ChoreCard extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          '₪$reward',
+                          '$currencySymbol$reward', // <-- currency from FamilyService
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,

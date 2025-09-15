@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chore_bid/services/family_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -25,10 +27,22 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
   /// IMPORTANT: values can be either legacy String or {status,time} map
   late Map<String, dynamic> progressMap;
 
+  // NEW: show description for both roles (read-only)
+  late final String description;
+
   Map<String, String> _childNamesById = {};
   // Selections
   Set<String> _selectedToVerify = {};
   Set<String> _selectedToPay = {};
+
+  // ----- currency from FamilyService -----
+  final _familyService = FamilyService();
+  String _currencySymbol = r'$'; // UI display
+  String _currencyCode = 'USD';  // used for payment records
+  StreamSubscription<String?>? _curSymSub;
+  StreamSubscription<String?>? _curCodeSub;
+
+  bool get _isChild => (UserService.currentUser?.role == 'child');
 
   @override
   void initState() {
@@ -38,11 +52,37 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
     rewardController = TextEditingController(text: widget.chore.reward);
     deadline = widget.chore.deadline;
     assignedTo = List<String>.from(widget.chore.assignedTo);
-
-    // FIX: keep dynamic since values may be maps
     progressMap = Map<String, dynamic>.from(widget.chore.progress ?? {});
+    description = widget.chore.description; // keep as-is (read-only)
 
+    _initCurrency();
     _loadChildNames();
+  }
+
+  Future<void> _initCurrency() async {
+    final familyId = UserService.currentUser?.familyId;
+    if (familyId == null || familyId.isEmpty) return;
+
+    // Start listening to family doc (if not already)
+    _familyService.listenToFamily(familyId);
+
+    // seed immediate values if already cached
+    _currencySymbol = _familyService.currentCurrency;
+    _currencyCode = _familyService.currentCurrency;
+
+    _curSymSub = _familyService.currencyStream.listen((sym) {
+      if (!mounted) return;
+      if (sym != null && sym.isNotEmpty && sym != _currencySymbol) {
+        setState(() => _currencySymbol = sym);
+      }
+    });
+
+    _curCodeSub = _familyService.currencyStream.listen((code) {
+      if (!mounted) return;
+      if (code != null && code.isNotEmpty && code != _currencyCode) {
+        setState(() => _currencyCode = code);
+      }
+    });
   }
 
   Future<void> _loadChildNames() async {
@@ -61,6 +101,9 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
   void dispose() {
     titleController.dispose();
     rewardController.dispose();
+    _curSymSub?.cancel();
+    _curCodeSub?.cancel();
+    _familyService.dispose();
     super.dispose();
   }
 
@@ -77,6 +120,8 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
   // --------------------------------------------
 
   Future<void> _saveChanges() async {
+    // NOTE: description is view-only here (ChoreService.updateChore signature
+    // provided does not include description), so we don't attempt to save it.
     await ChoreService().updateChore(
       familyId: UserService.currentUser!.familyId!,
       choreId: widget.chore.id,
@@ -133,7 +178,7 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
   // --- Payment helpers ------------------------------------------------------
 
   int _parseAmountCents(String raw) {
-    // Accept things like "30", "30.50", "30,50", "₪30.50"
+    // Accept things like "30", "30.50", "30,50", "₪30.50", "$30"
     var s = raw.trim();
     s = s.replaceAll(RegExp(r'[^0-9\.,]'), '');
     if (s.contains(',') && !s.contains('.')) {
@@ -157,7 +202,7 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
         choreId: choreId,
         childId: childId,
         amountCents: amountCents,
-        currency: 'ILS',
+        currency: _currencyCode.isNotEmpty ? _currencyCode : 'USD', // <- from family
         method: 'cash',
         paidByUid: payer,
         paidAt: DateTime.now(),
@@ -198,15 +243,16 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
         ),
         centerTitle: true,
         actions: [
-          // If everything is still unclaimed, allow edit (keep original intent)
-          if (progressMap.values.every(
-            (v) => _statusFrom(v) == null || _statusFrom(v) == 'unclaimed',
-          ))
+          // Child is view-only: no edit/delete
+          if (!_isChild &&
+              progressMap.values.every(
+                (v) => _statusFrom(v) == null || _statusFrom(v) == 'unclaimed',
+              ))
             IconButton(
               icon: Icon(isEditing ? Icons.cancel : Icons.edit),
               onPressed: () => setState(() => isEditing = !isEditing),
             ),
-          if (!isEditing)
+          if (!_isChild && !isEditing)
             IconButton(icon: const Icon(Icons.delete), onPressed: _deleteChore),
         ],
       ),
@@ -239,13 +285,23 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                       ),
               ),
               const SizedBox(height: 20),
+              // NEW: Description (read-only for all roles to match existing update API)
+              _section(
+                icon: Icons.description,
+                label: 'Description',
+                contentWidget: Text(
+                  (description.isNotEmpty ? description : 'No description provided'),
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ),
+              const SizedBox(height: 20),
               _section(
                 icon: Icons.monetization_on,
                 label: 'Reward',
                 contentWidget: isEditing
                     ? TextField(controller: rewardController)
                     : Text(
-                        '${rewardController.text}₪',
+                        '$_currencySymbol${rewardController.text}',
                         style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
@@ -299,55 +355,34 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
               _section(
                 icon: Icons.group,
                 label: 'Assigned to',
-                contentWidget: isEditing
-                    ? Wrap(
-                        spacing: 8,
-                        children: _childNamesById.entries.map((entry) {
-                          final childId = entry.key;
-                          final isSelected = assignedTo.contains(childId);
-                          return FilterChip(
-                            label: Text(entry.value),
-                            selected: isSelected,
-                            onSelected: (selected) {
-                              setState(() {
-                                if (selected) {
-                                  assignedTo.add(childId);
-                                } else {
-                                  assignedTo.remove(childId);
-                                }
-                              });
-                            },
-                          );
-                        }).toList(),
-                      )
-                    : Text(
-                        assignedTo
-                            .map((id) => _childNamesById[id] ?? 'Unknown')
-                            .join(', '),
-                        style: const TextStyle(fontSize: 16),
-                      ),
+                contentWidget: Text(
+                  assignedTo
+                      .map((id) => _childNamesById[id] ?? 'Unknown')
+                      .join(', '),
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
               const SizedBox(height: 20),
 
-              // Verify completed
-              _section(
-                icon: Icons.check,
-                label: 'Verify Completed Chores',
-                contentWidget: _buildVerificationChecklist(),
-              ),
-              const SizedBox(height: 20),
-
-              // Pay verified
-              _section(
-                icon: Icons.payments,
-                label: 'Pay Verified Children',
-                contentWidget: _buildPaymentChecklist(),
-              ),
+              // Parent-only management sections
+              if (!_isChild)
+                _section(
+                  icon: Icons.check,
+                  label: 'Verify Completed Chores',
+                  contentWidget: _buildVerificationChecklist(),
+                ),
+              if (!_isChild) const SizedBox(height: 20),
+              if (!_isChild)
+                _section(
+                  icon: Icons.payments,
+                  label: 'Pay Verified Children',
+                  contentWidget: _buildPaymentChecklist(),
+                ),
 
               const Spacer(),
 
-              // Action buttons
-              if (_selectedToVerify.isNotEmpty)
+              // Parent-only action buttons
+              if (!_isChild && _selectedToVerify.isNotEmpty)
                 Center(
                   child: ElevatedButton.icon(
                     onPressed: _verifySelectedChildren,
@@ -363,9 +398,9 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                     ),
                   ),
                 ),
-              if (_selectedToVerify.isNotEmpty && _selectedToPay.isNotEmpty)
+              if (!_isChild && _selectedToVerify.isNotEmpty && _selectedToPay.isNotEmpty)
                 const SizedBox(height: 8),
-              if (_selectedToPay.isNotEmpty)
+              if (!_isChild && _selectedToPay.isNotEmpty)
                 Center(
                   child: ElevatedButton.icon(
                     onPressed: _paySelectedChildren,
@@ -381,8 +416,8 @@ class _ChoreInfoPageState extends State<ChoreInfoPage> {
                     ),
                   ),
                 ),
-              if (isEditing) const SizedBox(height: 8),
-              if (isEditing)
+              if (!_isChild && isEditing) const SizedBox(height: 8),
+              if (!_isChild && isEditing)
                 Center(
                   child: ElevatedButton.icon(
                     onPressed: _saveChanges,

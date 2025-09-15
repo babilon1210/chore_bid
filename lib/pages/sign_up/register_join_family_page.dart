@@ -1,10 +1,13 @@
 import 'dart:convert';
 
+import 'package:chore_bid/pages/splash_loader_page.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:chore_bid/pages/qr_scanner_page.dart';
 import 'package:chore_bid/services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart' as gsi;
 
 class RegisterJoinFamilyPage extends StatefulWidget {
   final String role; // 'child' or 'parent'
@@ -28,9 +31,10 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
   String? _qrScanError;
   bool _loading = false;
 
-  // -------------------- CHILD FLOW (new) --------------------
+  bool get _isLinked => (familyId != null && familyId!.isNotEmpty);
+
+  // -------------------- CHILD FLOW (unchanged) --------------------
   Future<void> _scanInviteAndSignIn() async {
-    // Opens your existing scanner page to get raw string back
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const QRScannerPage()),
@@ -44,7 +48,6 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
 
     try {
-      // Expect a JSON payload like: {"v":1,"type":"invite","code":"<...>"}
       String? code;
       try {
         final decoded = jsonDecode(result);
@@ -52,7 +55,6 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           code = decoded['code'] as String;
         }
       } catch (_) {
-        // Fallback: allow plain code text
         if (result is String && result.trim().isNotEmpty) {
           code = result.trim();
         }
@@ -64,17 +66,17 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
 
       setState(() => _loading = true);
 
-      // Redeem the code (Cloud Function creates child if needed, then returns a custom token)
       final callable = FirebaseFunctions.instance.httpsCallable('redeemCode');
       final res = await callable.call({'code': code});
-      final data = (res.data is Map) ? Map<String, dynamic>.from(res.data) : <String, dynamic>{};
+      final data = (res.data is Map)
+          ? Map<String, dynamic>.from(res.data)
+          : <String, dynamic>{};
       final token = data['customToken'] as String?;
 
       if (token == null || token.isEmpty) {
         throw Exception('Could not sign in with this code.');
       }
 
-      // Sign in with the custom token
       await FirebaseAuth.instance.signInWithCustomToken(token);
 
       if (!mounted) return;
@@ -91,7 +93,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     }
   }
 
-  // -------------------- OLD (second parent) FLOW (unchanged UI) --------------------
+  // -------------------- SECOND PARENT: QR scan helpers --------------------
   Future<void> _scanFamilyQrToGetFamilyId() async {
     final result = await Navigator.push(
       context,
@@ -100,9 +102,9 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
 
     if (result != null) {
       try {
-        // Accept either "familyId: ABC123" OR {"familyId":"ABC123"}
         String? id;
-        final match = RegExp(r'familyId[:=]\s*([a-zA-Z0-9_-]+)').firstMatch(result);
+        final match =
+            RegExp(r'familyId[:=]\s*([a-zA-Z0-9_-]+)').firstMatch(result);
         if (match != null) {
           id = match.group(1);
         } else {
@@ -124,7 +126,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('QR Scan successful'),
+            content: Text('Family QR linked'),
             backgroundColor: Colors.green,
           ),
         );
@@ -147,6 +149,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
   }
 
+  // -------------------- SECOND PARENT: Email/Password path --------------------
   Future<void> _registerSecondParent() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -169,11 +172,12 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
       );
 
       if (user != null && mounted) {
-        final callable = FirebaseFunctions.instance.httpsCallable('createUserWithFamily');
+        final callable =
+            FirebaseFunctions.instance.httpsCallable('createUserWithFamily');
         await callable.call({
           'role': 'parent',
           'name': _nameController.text.trim(),
-          'familyId': familyId,
+          'familyId': familyId, // <— MUST pass familyId for second parent
         });
 
         Navigator.pushReplacementNamed(context, '/splash');
@@ -185,46 +189,188 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     }
   }
 
-  // -------------------- UI --------------------
-  Widget _secondParentQrSection() {
-    if (familyId != null) {
-      return Row(
-        children: [
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF81C784)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Color(0xFF2E7D32)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Family linked: $familyId',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF2E7D32),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          TextButton(onPressed: _clearScan, child: const Text('Change')),
-        ],
+  // -------------------- SECOND PARENT: Google path --------------------
+  Future<void> _continueWithGoogleSecondParent() async {
+    // Hard requirement: must scan QR first
+    if (familyId == null) {
+      setState(() => _qrScanError = "Please scan the family QR code first.");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please scan the family QR first')),
       );
+      return;
     }
 
-    return ElevatedButton(
-      onPressed: _scanFamilyQrToGetFamilyId,
-      child: const Text('Scan Family QR'),
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final googleUser = await gsi.GoogleSignIn.instance.authenticate();
+      if (googleUser == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+      final googleAuth = await googleUser.authentication;
+
+      final credential = GoogleAuthProvider.credential(
+        idToken: googleAuth.idToken,
+        // NOTE: keeping your original logic as requested
+        accessToken: googleAuth.idToken,
+      );
+
+      final credResult =
+          await FirebaseAuth.instance.signInWithCredential(credential);
+      final firebaseUser = credResult.user;
+      if (firebaseUser == null) {
+        throw Exception('Firebase sign-in failed');
+      }
+
+      // BEFORE creating/joining: check if profile exists
+      final uid = firebaseUser.uid;
+      final userDoc =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+
+      if (userDoc.exists) {
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Account exists'),
+            content: const Text('This user already exists. Sign in?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('No'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Yes'),
+              ),
+            ],
+          ),
+        );
+
+        if (proceed == true) {
+          if (!mounted) return;
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const SplashLoaderPage()),
+            (route) => false,
+          );
+        } else {
+          await _authService.logout();
+          await gsi.GoogleSignIn.instance.signOut();
+          if (mounted) setState(() => _loading = false);
+        }
+        return;
+      }
+
+      // No profile yet -> join the scanned family with callable
+      final callable =
+          FirebaseFunctions.instance.httpsCallable('createUserWithFamily');
+      await callable.call({
+        'role': 'parent',
+        'name': (googleUser.displayName ?? 'Parent'),
+        'familyId': familyId, // <— join the scanned family
+      });
+
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/splash');
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // -------------------- UI --------------------
+
+  Widget _stepHeader(String title) {
+    return Row(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _secondParentQrSection() {
+    // Step 1 card
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFE082)),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _stepHeader('Step 1: Scan Family QR'),
+          const SizedBox(height: 8),
+          const Text(
+            'You must link to the existing family by scanning its QR. '
+            'After linking, you can continue with sign up.',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          if (_isLinked)
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5E9),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF81C784)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle,
+                            color: Color(0xFF2E7D32)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Family linked: $familyId',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF2E7D32),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(onPressed: _clearScan, child: const Text('Change')),
+              ],
+            )
+          else
+            SizedBox(
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: _scanFamilyQrToGetFamilyId,
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scan Family QR'),
+              ),
+            ),
+          if (_qrScanError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _qrScanError!,
+              style: const TextStyle(color: Colors.red),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -243,7 +389,8 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     return Directionality(
       textDirection: TextDirection.ltr,
       child: Scaffold(
-        appBar: AppBar(title: Text(isChild ? 'Join as Child' : 'Join as Parent')),
+        appBar:
+            AppBar(title: Text(isChild ? 'Join as Child' : 'Join as Parent')),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
           child: _loading
@@ -254,7 +401,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     );
   }
 
-  // --------- New CHILD signup: only scan invite QR ---------
+  // --------- CHILD signup (unchanged) ---------
   Widget _buildChildBody() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -269,7 +416,8 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           onPressed: _scanInviteAndSignIn,
           icon: const Icon(Icons.qr_code_scanner),
           label: const Text('Scan My Sign-up QR'),
-          style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+          style:
+              ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
@@ -279,16 +427,38 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     );
   }
 
-  // --------- Existing SECOND PARENT join flow (unchanged) ---------
+  // --------- SECOND PARENT layout (Step 1 + Step 2) ---------
   Widget _buildSecondParentBody() {
+    final disabledHint = !_isLinked
+        ? const Padding(
+            padding: EdgeInsets.only(top: 8.0),
+            child: Text(
+              'Scan the Family QR above to enable sign up.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.black54,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
+
     return Form(
       key: _formKey,
       child: ListView(
         children: [
+          // STEP 1 (Required)
+          _secondParentQrSection(),
+          const SizedBox(height: 16),
+
+          // STEP 2 (Account creation)
+          _stepHeader('Step 2: Create your parent account'),
+          const SizedBox(height: 8),
           TextFormField(
             controller: _nameController,
             decoration: const InputDecoration(labelText: 'Name'),
-            validator: (val) => val == null || val.isEmpty ? 'Enter your name' : null,
+            validator: (val) =>
+                val == null || val.isEmpty ? 'Enter your name' : null,
           ),
           TextFormField(
             controller: _emailController,
@@ -307,18 +477,50 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
             obscureText: true,
             validator: (val) => val == null || val.length < 6 ? 'Too short' : null,
           ),
-          const SizedBox(height: 10),
-          _secondParentQrSection(),
-          if (_qrScanError != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8.0),
-              child: Text(_qrScanError!, style: const TextStyle(color: Colors.red)),
-            ),
           const SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _registerSecondParent,
-            child: const Text('Sign Up'),
+
+          // Email/Password submit
+          SizedBox(
+            height: 48,
+            child: ElevatedButton(
+              onPressed: _isLinked ? _registerSecondParent : null,
+              child: const Text('Sign Up'),
+            ),
           ),
+          if (!_isLinked) disabledHint,
+
+          // Divider
+          const SizedBox(height: 12),
+          Row(
+            children: const [
+              Expanded(child: Divider()),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8.0),
+                child: Text('or'),
+              ),
+              Expanded(child: Divider()),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Continue with Google (also disabled until QR linked)
+          SizedBox(
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed:
+                  _isLinked ? _continueWithGoogleSecondParent : null,
+              icon: const Icon(Icons.g_mobiledata, size: 28),
+              label: const Text(
+                'Continue with Google',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.black12),
+              ),
+            ),
+          ),
+          if (!_isLinked) disabledHint,
+
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 12.0),

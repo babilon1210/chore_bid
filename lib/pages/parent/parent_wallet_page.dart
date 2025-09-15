@@ -35,6 +35,10 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   StreamSubscription<List<Chore>>? _choresSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _expiredSub;
 
+  // currency (from FamilyService)
+  StreamSubscription<String?>? _currencySub;
+  String _currencySymbol = r'$';
+
   // ----- data -----
   List<Chore> _activeChores = [];
   List<Chore> _expiredRecent = [];
@@ -61,6 +65,16 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   }
 
   Future<void> _bootstrap() async {
+    // start listening to family so currency stays live
+    _familySvc.listenToFamily(_familyId);
+    _currencySymbol = _familySvc.currentCurrency;
+    _currencySub = _familySvc.currencyStream.listen((sym) {
+      if (!mounted) return;
+      if (sym != null && sym.isNotEmpty && sym != _currencySymbol) {
+        setState(() => _currencySymbol = sym);
+      }
+    });
+
     // 1) Load child names once
     final names = await _familySvc.getChildrenNamesMap(_familyId);
     if (!mounted) return;
@@ -98,6 +112,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   void dispose() {
     _choresSub?.cancel();
     _expiredSub?.cancel();
+    _currencySub?.cancel();
     _familySvc.dispose();
     super.dispose();
   }
@@ -124,9 +139,9 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   int _sumRewards(List<Chore> chores) =>
       chores.fold(0, (sum, c) => sum + (int.tryParse(c.reward) ?? 0));
 
-  String _ils(int amount) => '₪$amount';
+  String _money(int amount) => '$_currencySymbol$amount';
 
-  int _toCents(int shekels) => shekels * 100;
+  int _toCents(int major) => major * 100;
 
   // ----- timeframe helpers -----
   DateTime _startOfDay(DateTime d) => DateTime(d.year, d.month, d.day);
@@ -320,13 +335,13 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
     required String method,
     String? txRef,
   }) async {
-    final rewardILS = int.tryParse(chore.reward) ?? 0;
+    final rewardMajor = int.tryParse(chore.reward) ?? 0;
     await _choreSvc.markChoreAsPaid(
       familyId: _familyId,
       choreId: chore.id,
       childId: childId,
-      amountCents: _toCents(rewardILS),
-      currency: 'ILS',
+      amountCents: _toCents(rewardMajor),
+      currency: 'ILS', // business logic code remains as-is; display uses symbol from FamilyService
       method: method,
       txRef: txRef,
       paidByUid: _parentUid,
@@ -413,7 +428,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
                     ),
                     const Spacer(),
                     Text(
-                      _ils(total),
+                      _money(total),
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                     ),
                   ],
@@ -547,7 +562,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
                   Expanded(
                     child: _statCard(
                       label: (l?.waitingPayment ?? 'Waiting payment') + ' (${_rangeLabel()})',
-                      value: _ils(waitingAmount),
+                      value: _money(waitingAmount),
                       icon: Icons.hourglass_bottom_rounded,
                       bg: const Color.fromARGB(255, 255, 159, 132),
                       selected: _tab == ParentWalletTab.pending,
@@ -558,7 +573,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
                   Expanded(
                     child: _statCard(
                       label: 'Paid',
-                      value: _ils(paidAmount),
+                      value: _money(paidAmount),
                       icon: Icons.payments_rounded,
                       bg: const Color(0xFFB6F6A8),
                       selected: _tab == ParentWalletTab.paid,
@@ -596,27 +611,32 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
               const SizedBox(height: 12),
 
               // CONTENT for selected child
-              Expanded(
-                child: (selectedId == null)
-                    ? _emptyState('Select a child')
-                    : _SelectedChildPane(
-                        childId: selectedId,
-                        childName: _childNames[selectedId] ?? 'Child',
-                        tab: _tab,
-                        pending: _pendingInRangeFor(selectedId),
-                        paidInRange: _paidInRangeFor(selectedId),
-                        df: _df,
-                        ils: _ils,
-                        timeFor: (chore) => _timeFor(chore, selectedId),
-                        onPayAll: (chores) =>
-                            _openPaySheet(childId: selectedId, chores: chores),
-                        onPaySingle: (chore) => _openPaySheet(
-                          childId: selectedId,
-                          chores: const [],
-                          single: chore,
-                        ),
-                      ),
-              ),
+              if (selectedId != null)
+                Expanded(
+                  child: _SelectedChildPane(
+                    childId: selectedId,
+                    childName: _childNames[selectedId] ?? 'Child',
+                    tab: _tab,
+                    pending: _pendingInRangeFor(selectedId),
+                    paidInRange: _paidInRangeFor(selectedId),
+                    df: _df,
+                    money: _money, // <-- pass symbolized formatter
+                    timeFor: (chore) => _timeFor(chore, selectedId),
+                    onPayAll: (chores) => _openPaySheet(childId: selectedId, chores: chores),
+                    onPaySingle: (chore) => _openPaySheet(
+                      childId: selectedId,
+                      chores: const [],
+                      single: chore,
+                    ),
+                  ),
+                )
+              else
+                // No "Select a child" card when there are no children.
+                // If there are children but none selected (edge), show a small placeholder.
+                if (childIds.isNotEmpty)
+                  Expanded(child: _emptyState('Select a child'))
+                else
+                  const SizedBox.shrink(),
             ],
           ),
         ),
@@ -796,7 +816,7 @@ class _SelectedChildPane extends StatelessWidget {
   final List<Chore> pending;
   final List<Chore> paidInRange;
   final DateFormat df;
-  final String Function(int) ils;
+  final String Function(int) money; // currency symbol formatter
   final DateTime? Function(Chore chore) timeFor; // status time for this child
   final void Function(List<Chore> chores) onPayAll;
   final void Function(Chore chore) onPaySingle;
@@ -808,7 +828,7 @@ class _SelectedChildPane extends StatelessWidget {
     required this.pending,
     required this.paidInRange,
     required this.df,
-    required this.ils,
+    required this.money,
     required this.timeFor,
     required this.onPayAll,
     required this.onPaySingle,
@@ -853,7 +873,7 @@ class _SelectedChildPane extends StatelessWidget {
               final t = timeFor(c); // status time for current status (verified/paid)
               return _walletTile(
                 title: c.title,
-                amount: ils(int.tryParse(c.reward) ?? 0),
+                amount: money(int.tryParse(c.reward) ?? 0),
                 statusLabel:
                     isPending ? 'Awaiting payment' : (AppLocalizations.of(context)?.paid ?? 'Paid'),
                 statusColor: isPending ? const Color(0xFF1E88E5) : const Color(0xFF2E7D32),

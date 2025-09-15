@@ -19,7 +19,9 @@ class FamilyChild {
     return FamilyChild(
       uid: doc.id,
       name: (data['name'] as String?) ?? 'Child',
-      createdAt: data['createdAt'] is Timestamp ? data['createdAt'] as Timestamp : null,
+      createdAt: data['createdAt'] is Timestamp
+          ? data['createdAt'] as Timestamp
+          : null,
     );
   }
 }
@@ -47,7 +49,9 @@ class ChildInvite {
       name: (data['name'] as String?) ?? 'New child',
       familyId: (data['familyId'] as String?) ?? '',
       used: (data['used'] as bool?) ?? false,
-      createdAt: data['createdAt'] is Timestamp ? data['createdAt'] as Timestamp : null,
+      createdAt: data['createdAt'] is Timestamp
+          ? data['createdAt'] as Timestamp
+          : null,
     );
   }
 }
@@ -57,19 +61,31 @@ class FamilyService {
   StreamSubscription<DocumentSnapshot>? _familySub;
 
   FamilyModel? currentFamily;
-  final StreamController<FamilyModel?> _familyController = StreamController.broadcast();
+  final StreamController<FamilyModel?> _familyController =
+      StreamController.broadcast();
 
+  /// Stream of the whole family model
   Stream<FamilyModel?> get familyStream => _familyController.stream;
+
+  /// Convenience: just the family's currency (updates live)
+  Stream<String?> get currencyStream => familyStream.map((f) => f?.currency);
+
+  /// Convenience: current currency (or a sensible default)
+  String get currentCurrency => currentFamily?.currency ?? r'$';
 
   /// Start listening to changes on a family document
   void listenToFamily(String familyId) {
     _familySub?.cancel(); // Cancel previous listener if exists
-    _familySub =
-        _firestore.collection('families').doc(familyId).snapshots().listen((doc) {
+    _familySub = _firestore
+        .collection('families')
+        .doc(familyId)
+        .snapshots()
+        .listen((doc) {
       if (doc.exists) {
         currentFamily = FamilyModel.fromDoc(doc);
         _familyController.add(currentFamily);
       } else {
+        currentFamily = null;
         _familyController.add(null);
       }
     });
@@ -85,6 +101,14 @@ class FamilyService {
   Future<FamilyModel?> fetchFamily(String familyId) async {
     final doc = await _firestore.collection('families').doc(familyId).get();
     return doc.exists ? FamilyModel.fromDoc(doc) : null;
+  }
+
+  /// Update the family's currency
+  Future<void> setFamilyCurrency(String familyId, String currency) async {
+    await _firestore.collection('families').doc(familyId).set(
+      {'currency': currency},
+      SetOptions(merge: true),
+    );
   }
 
   /// Add a child to the family (helper)
@@ -108,7 +132,6 @@ class FamilyService {
   }
 
   /// One-off: returns a map of childId -> name using the family's childIds list.
-  /// (Used by the Wallet page already.)
   Future<Map<String, String>> getChildrenNamesMap(String familyId) async {
     final family = await fetchFamily(familyId);
     if (family == null || family.childIds.isEmpty) return {};
@@ -120,12 +143,12 @@ class FamilyService {
         .get();
 
     return {
-      for (var doc in childrenSnapshot.docs) doc.id: doc.data()['name'] ?? 'Unnamed',
+      for (var doc in childrenSnapshot.docs)
+        doc.id: (doc.data()['name'] as String?) ?? 'Unnamed',
     };
   }
 
   /// **Stream** of children in the family (id + name), ordered by createdAt desc.
-  /// Uses a Firestore query (inside the service as requested).
   Stream<List<FamilyChild>> childrenStream(String familyId) {
     return _firestore
         .collection('users')

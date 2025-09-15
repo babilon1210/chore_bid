@@ -30,6 +30,8 @@
 	<string>Main</string>
 	<key>NSCameraUsageDescription</key>
 	<string>We use the camera to scan QR codes.</string>
+	<key>GIDClientID</key>
+	<string>605689934779-54aec433eiptkoer6rhkvu46pgho3ras.apps.googleusercontent.com</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -52,6 +54,17 @@
 	<key>UIBackgroundModes</key>
 	<array>
 	<string>remote-notification</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+	<dict>
+		<key>CFBundleTypeRole</key>
+		<string>Editor</string>
+		<key>CFBundleURLSchemes</key>
+		<array>
+		<string>com.googleusercontent.apps.605689934779-54aec433eiptkoer6rhkvu46pgho3ras</string>
+		</array>
+	</dict>
 	</array>
 
 </dict>
