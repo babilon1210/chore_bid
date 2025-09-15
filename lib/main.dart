@@ -5,8 +5,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
-import 'l10n/generated/app_localizations.dart';
 import 'pages/auth_gate_page.dart';
 import 'pages/splash_loader_page.dart';
 
@@ -78,9 +76,6 @@ class ChoreBidApp extends StatelessWidget {
       title: 'ChoreBid',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.indigo),
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      onGenerateTitle: (ctx) => AppLocalizations.of(ctx)!.appTitle,
       initialRoute: '/',
       routes: {
         '/': (context) => const AuthGatePage(),

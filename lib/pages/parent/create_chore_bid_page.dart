@@ -30,6 +30,9 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
   bool _isExclusive = true;
   bool _isSubmitting = false;
 
+  // Show the child-selection error only after the user tries to submit
+  bool _showChildSelectionError = false;
+
   // Currency from FamilyService (live)
   String _currency = r'$';
   StreamSubscription<String?>? _currencySub;
@@ -160,22 +163,18 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
   Future<void> _submitForm() async {
     if (_isSubmitting) return;
 
+    // The user attempted to submit — show the child selection error if empty.
+    setState(() => _showChildSelectionError = true);
+
     // Hard validations related to children
     if (!_hasChildren) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Add a child first to create a chore.')),
-      );
-      return;
-    }
-    if (!_hasAtLeastOneSelection) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select at least one child')),
+        const SnackBar(content: Text('Add a child first to create a chore.')),
       );
       return;
     }
 
-    // Validate form fields
+    // Validate form text fields (title/description/reward)
     final formOk = _formKey.currentState!.validate();
 
     // Validate deadline presence + rules
@@ -190,6 +189,12 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
           content: Text('Deadline must be at least 30 minutes from now.'),
         ),
       );
+      return;
+    }
+
+    // Validate at least one child selected
+    if (!_hasAtLeastOneSelection) {
+      // Inline message will be visible now; no need to also spam a snackbar.
       return;
     }
 
@@ -239,15 +244,13 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
         ? 'Pick a deadline'
         : 'Deadline: ${_selectedDeadline!.toLocal().toString().substring(0, 16)}';
 
-    final canSubmit =
-        !_isSubmitting && _hasChildren && _hasAtLeastOneSelection;
-
     return Scaffold(
       appBar: AppBar(title: const Text('New Chore Bid')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Form(
           key: _formKey,
+          autovalidateMode: AutovalidateMode.disabled, // only validate on submit
           child: ListView(
             children: [
               TextFormField(
@@ -361,7 +364,7 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
                           },
                   );
                 }).toList(),
-                if (!_hasAtLeastOneSelection)
+                if (_showChildSelectionError && !_hasAtLeastOneSelection)
                   const Padding(
                     padding: EdgeInsets.only(left: 8, bottom: 4),
                     child: Text(
@@ -392,11 +395,11 @@ class _CreateChoreBidPageState extends State<CreateChoreBidPage> {
 
               const SizedBox(height: 32),
 
-              // ----- Submit button with loading + validation state -----
+              // ----- Submit button with loading state -----
               SizedBox(
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: canSubmit ? _submitForm : null,
+                  onPressed: _isSubmitting ? null : _submitForm,
                   child: _isSubmitting
                       ? Row(
                           mainAxisAlignment: MainAxisAlignment.center,

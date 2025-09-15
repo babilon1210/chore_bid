@@ -1,5 +1,6 @@
+// lib/pages/register_join_family_page.dart
 import 'dart:convert';
-
+import 'package:chore_bid/pages/sign_up/email_verification_page.dart';
 import 'package:chore_bid/pages/splash_loader_page.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -25,6 +26,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
 
   String? familyId;
   String? _error;
@@ -149,7 +151,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
   }
 
-  // -------------------- SECOND PARENT: Email/Password path --------------------
+  // -------------------- SECOND PARENT: Email/Password with EMAIL VERIFICATION --------------------
   Future<void> _registerSecondParent() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -164,6 +166,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
 
     try {
+      // Create the Firebase user (signed in after this)
       final user = await _authService.register(
         name: _nameController.text.trim(),
         email: _emailController.text.trim(),
@@ -171,16 +174,38 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
         role: 'parent',
       );
 
-      if (user != null && mounted) {
-        final callable =
-            FirebaseFunctions.instance.httpsCallable('createUserWithFamily');
-        await callable.call({
-          'role': 'parent',
-          'name': _nameController.text.trim(),
-          'familyId': familyId, // <— MUST pass familyId for second parent
-        });
+      if (user != null) {
+        // Send verification email
+        await _authService.sendVerificationEmail();
 
-        Navigator.pushReplacementNamed(context, '/splash');
+        // Navigate to the email verification page and wait for completion.
+        if (!mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => EmailVerificationPage(
+              email: _emailController.text.trim(),
+              authService: _authService,
+              onVerified: () async {
+                // After verification, attach this parent to the scanned family.
+                final callable = FirebaseFunctions.instance
+                    .httpsCallable('createUserWithFamily');
+                await callable.call({
+                  'role': 'parent',
+                  'name': _nameController.text.trim(),
+                  'familyId': familyId, // join the scanned family
+                });
+
+                if (!mounted) return;
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SplashLoaderPage()),
+                  (route) => false,
+                );
+              },
+            ),
+          ),
+        );
       }
     } catch (e) {
       setState(() => _error = e.toString());
@@ -189,7 +214,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     }
   }
 
-  // -------------------- SECOND PARENT: Google path --------------------
+  // -------------------- SECOND PARENT: Google path (unchanged logic) --------------------
   Future<void> _continueWithGoogleSecondParent() async {
     // Hard requirement: must scan QR first
     if (familyId == null) {
@@ -215,7 +240,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
 
       final credential = GoogleAuthProvider.credential(
         idToken: googleAuth.idToken,
-        // NOTE: keeping your original logic as requested
+        // Keeping your original logic
         accessToken: googleAuth.idToken,
       );
 
@@ -379,6 +404,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -465,7 +491,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
             decoration: const InputDecoration(labelText: 'Email'),
             keyboardType: TextInputType.emailAddress,
             validator: (val) {
-              if (val == null || !val.contains('@')) {
+              if (val == null || val.isEmpty || !val.contains('@')) {
                 return 'Valid email required';
               }
               return null;
@@ -475,11 +501,27 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
             controller: _passwordController,
             decoration: const InputDecoration(labelText: 'Password'),
             obscureText: true,
-            validator: (val) => val == null || val.length < 6 ? 'Too short' : null,
+            validator: (val) =>
+                val == null || val.length < 6 ? 'Too short' : null,
+          ),
+          TextFormField(
+            controller: _confirmPasswordController,
+            decoration:
+                const InputDecoration(labelText: 'Confirm password'),
+            obscureText: true,
+            validator: (val) {
+              if (val == null || val.isEmpty) {
+                return 'Confirm your password';
+              }
+              if (val != _passwordController.text) {
+                return 'Passwords do not match';
+              }
+              return null;
+            },
           ),
           const SizedBox(height: 20),
 
-          // Email/Password submit
+          // Email/Password submit (requires QR link first)
           SizedBox(
             height: 48,
             child: ElevatedButton(
@@ -507,8 +549,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           SizedBox(
             height: 48,
             child: OutlinedButton.icon(
-              onPressed:
-                  _isLinked ? _continueWithGoogleSecondParent : null,
+              onPressed: _isLinked ? _continueWithGoogleSecondParent : null,
               icon: const Icon(Icons.g_mobiledata, size: 28),
               label: const Text(
                 'Continue with Google',

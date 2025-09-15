@@ -22,9 +22,6 @@ import 'package:confetti/confetti.dart';
 // TTS
 import 'package:flutter_tts/flutter_tts.dart';
 
-// 🔤 Localizations (your generated file)
-import 'package:chore_bid/l10n/generated/app_localizations.dart';
-
 // 🔧 Family currency
 import '../../services/family_service.dart';
 
@@ -363,7 +360,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // NEW: confirmation dialog before marking Done
   Future<void> _confirmDone(Chore chore) async {
-    final l = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
@@ -371,11 +367,11 @@ class _ChildHomePageState extends State<ChildHomePage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: Text(l.no),
+                child: Text("No"),
               ),
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: Text(l.yes),
+                child: Text("Yes"),
               ),
             ],
           ),
@@ -577,7 +573,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // Top two-tab control
   Widget _topTabs() {
-    final l = AppLocalizations.of(context);
 
     Widget btn(String label, ChildTab t) {
       final sel = _tab == t;
@@ -613,8 +608,8 @@ class _ChildHomePageState extends State<ChildHomePage> {
       ),
       child: Row(
         children: [
-          btn(l.tabActive, ChildTab.active),
-          btn(l.tabHistory, ChildTab.history),
+          btn("Active", ChildTab.active),
+          btn("History", ChildTab.history),
         ],
       ),
     );
@@ -622,7 +617,6 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // ACTIVE tab
   Widget _buildActiveContent() {
-    final l = AppLocalizations.of(context);
 
     final hasAvailable = _available.isNotEmpty;
     final hasMyWork =
@@ -633,7 +627,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
     }
 
     if (!hasAvailable && !hasMyWork) {
-      return ListView(children: [_emptyState(l.noChoresNow)]);
+      return ListView(children: [_emptyState("No active chores")]);
     }
 
     final widgets = <Widget>[];
@@ -645,7 +639,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
       // Claimed -> Unclaim + Done (with confirmation)
       sections.addAll(
         _sectionIfAny(
-          AppLocalizations.of(context).claimed,
+          "Claimed",
           _claimed,
           suppressBottomExpiredPill: true,
           showRightDeadlineForActive: true,
@@ -660,7 +654,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
       // Completed -> (no action buttons)
       sections.addAll(
         _sectionIfAny(
-          AppLocalizations.of(context).waitingReview,
+          "Awaiting review",
           _completedWaiting,
           suppressBottomExpiredPill: true,
           showRightDeadlineForActive: true,
@@ -670,7 +664,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
       // Verified -> (no action buttons)
       sections.addAll(
         _sectionIfAny(
-          AppLocalizations.of(context).waitingPayment,
+          "Awaiting payment",
           _verifiedWaiting,
           suppressBottomExpiredPill: true,
           showRightDeadlineForActive: true,
@@ -712,7 +706,7 @@ class _ChildHomePageState extends State<ChildHomePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  l.availableChores,
+                  "Available chores",
                   style: const TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
@@ -750,16 +744,15 @@ class _ChildHomePageState extends State<ChildHomePage> {
 
   // HISTORY tab
   Widget _buildHistoryContent() {
-    final l = AppLocalizations.of(context);
 
     final children = <Widget>[];
-    children.addAll(_sectionIfAny(l.paid, _paid));
+    children.addAll(_sectionIfAny("Paid", _paid));
     children.addAll(
-      _sectionIfAny(l.expiredMissed, _expiredMissed, rightExpiredOnly: true),
+      _sectionIfAny("Expired - Missed", _expiredMissed, rightExpiredOnly: true),
     );
 
     if (children.isEmpty) {
-      return ListView(children: [_emptyState(l.noHistory)]);
+      return ListView(children: [_emptyState("No history")]);
     }
     return ListView(children: children);
   }
@@ -777,10 +770,9 @@ class _ChildHomePageState extends State<ChildHomePage> {
       Future<void> Function()? onDone,
     }) Function(Chore c)? actionsBuilder,
   }) {
-    final l = AppLocalizations.of(context);
     if (items.isEmpty) return const [];
     return [
-      _subHeader('$title • ${l.countLabel(items.length)}'),
+      _subHeader('$title • ${items.length}'),
       const SizedBox(height: 8),
       ...items.map(
         (c) {

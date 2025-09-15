@@ -91,6 +91,9 @@ class _HomePageState extends State<HomePage> {
   bool _hasAnyVerified(Chore c) => _hasAny(c, 'verified');
   bool _hasAnyPaid(Chore c) => _hasAny(c, 'paid');
 
+  // NEW: determine if any child has claimed the chore
+  bool _hasAnyClaimed(Chore c) => _hasAny(c, 'claimed');
+
   bool _isChoreCompletedForActive(Chore c) {
     if (c.status == 'expired') return false;
     return _hasAnyDone(c);
@@ -109,11 +112,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ---------- Buckets ----------
+  // Active chores: claimed ones should appear first, then by earliest deadline.
   List<Chore> get _activeList =>
       (UserService.currentUser?.chores ?? const <Chore>[])
           .where((c) => c.status != 'expired' && !_isChoreCompletedForActive(c))
           .toList()
-        ..sort((a, b) => a.deadline.compareTo(b.deadline));
+        ..sort((a, b) {
+          final aClaimed = _hasAnyClaimed(a) ? 0 : 1; // claimed first
+          final bClaimed = _hasAnyClaimed(b) ? 0 : 1;
+          if (aClaimed != bClaimed) return aClaimed - bClaimed;
+          // tie-breaker: earlier deadline first
+          final byDeadline = a.deadline.compareTo(b.deadline);
+          if (byDeadline != 0) return byDeadline;
+          // final tie-breaker: stable-ish by id
+          return a.id.compareTo(b.id);
+        });
 
   // Awaiting review:
   // - Non-exclusive: show if ANY child is 'complete' (even if others are 'verified'/'paid').

@@ -6,6 +6,9 @@ class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  /// Create a user with email/password and return the signed-in Firebase [User].
+  /// NOTE: We do NOT create a family here. Registration UI will send a verification
+  /// email and then wait for verification before proceeding to family creation.
   Future<User?> register({
     required String name,
     required String email,
@@ -14,14 +17,8 @@ class AuthService {
     String? optionalFamilyCode,
   }) async {
     try {
-      // Create user
+      // Create user (this signs the user in)
       final result = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-
-      // Explicit sign-in (usually already signed in after create, but kept for parity)
-      await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
@@ -33,23 +30,52 @@ class AuthService {
       }
       print('User created: ${user.uid}');
 
-      // Log ID token
+      // Log ID token (debug)
       final idToken = await user.getIdToken();
       print('ID Token: $idToken');
 
-      // Wait for a non-null user on the auth stream
+      // Ensure we have a non-null user in the stream
       await _auth.idTokenChanges().firstWhere((u) => u != null);
 
-      // Optional: Force refresh the token (to be extra safe)
+      // Optional: force refresh token
       await _auth.currentUser?.getIdToken(true);
 
-      // If you later re-enable the CF path, keep it here.
-      // return familyId / user as needed.
+      // Return user; the caller will trigger email verification flow.
       return user;
     } catch (e) {
       print('Registration error: $e');
       return null;
     }
+  }
+
+  /// Sends a verification email to the currently signed-in user (if needed).
+  Future<void> sendVerificationEmail() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('No signed-in user to send verification to.');
+    }
+    if (user.emailVerified) return; // nothing to do
+    await user.sendEmailVerification();
+  }
+
+  /// Reload current user and return whether email is verified.
+  Future<bool> reloadAndCheckVerified() async {
+    await _auth.currentUser?.reload();
+    return _auth.currentUser?.emailVerified ?? false;
+  }
+
+  /// (Optional helper) Poll until email is verified or timeout expires.
+  Future<bool> waitForEmailVerification({
+    Duration pollEvery = const Duration(seconds: 2),
+    Duration timeout = const Duration(minutes: 10),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final ok = await reloadAndCheckVerified();
+      if (ok) return true;
+      await Future.delayed(pollEvery);
+    }
+    return false;
   }
 
   /// Signs the user out.
@@ -64,7 +90,7 @@ class AuthService {
               .doc(uid)
               .update({'fcmToken': FieldValue.delete()});
         } catch (e) {
-          // Non-fatal: user doc may not exist / missing permission. Proceed to sign out.
+          // Non-fatal
           print('FCM token cleanup skipped: $e');
         }
       }

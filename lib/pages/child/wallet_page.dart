@@ -7,9 +7,6 @@ import '../../models/chore_model.dart';
 import '../../services/user_service.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-// 🔤 Localizations
-import 'package:chore_bid/l10n/generated/app_localizations.dart';
-
 // 🔧 Family currency
 import '../../services/family_service.dart';
 
@@ -340,7 +337,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
     );
   }
 
-  Widget _headerRow(AppLocalizations l) {
+  Widget _headerRow() {
     return Row(
       children: [
         // Title
@@ -416,7 +413,6 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
 
   @override
   Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context);
 
     final waitingAmount = _sumRewards(_pendingInRange);
     final paidAmount = _sumRewards(_paidInRange);
@@ -428,7 +424,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _headerRow(l),
+            _headerRow(),
             _rangeChip(),
             const SizedBox(height: 12),
 
@@ -437,7 +433,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
               children: [
                 Expanded(
                   child: _statCard(
-                    label: l.waitingPayment,
+                    label: "Awaiting payment",
                     value: _money(waitingAmount),
                     icon: Icons.hourglass_bottom_rounded,
                     bg: const Color.fromARGB(255, 255, 159, 132),
@@ -489,7 +485,7 @@ class _ChildWalletPageState extends State<ChildWalletPage> {
                         return _walletTile(
                           title: c.title,
                           amount: _money(_rewardFor(c)),
-                          statusLabel: l.paid,
+                          statusLabel: "Paid",
                           statusColor: const Color(0xFF2E7D32),
                           date: _df.format(t),
                           leadingIcon: Icons.attach_money_rounded,

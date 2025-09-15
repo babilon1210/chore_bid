@@ -3,8 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-
-import 'package:chore_bid/l10n/generated/app_localizations.dart';
 import '../../models/chore_model.dart';
 import '../../services/user_service.dart';
 import '../../services/family_service.dart';
@@ -367,7 +365,6 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
     required List<Chore> chores,
     Chore? single,
   }) {
-    final l = AppLocalizations.of(context);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -399,7 +396,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
               if (mounted) Navigator.pop(ctx);
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(l?.paid ?? 'Paid')),
+                SnackBar(content: Text('Paid')),
               );
             } catch (e) {
               setM(() => paying = false);
@@ -483,7 +480,6 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   // ----- build -----
   @override
   Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context);
     final childIds = _childIds;
 
     // Ensure selection
@@ -561,7 +557,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
                 children: [
                   Expanded(
                     child: _statCard(
-                      label: (l?.waitingPayment ?? 'Waiting payment') + ' (${_rangeLabel()})',
+                      label: 'Awaiting payment (${_rangeLabel()})',
                       value: _money(waitingAmount),
                       icon: Icons.hourglass_bottom_rounded,
                       bg: const Color.fromARGB(255, 255, 159, 132),
@@ -875,7 +871,7 @@ class _SelectedChildPane extends StatelessWidget {
                 title: c.title,
                 amount: money(int.tryParse(c.reward) ?? 0),
                 statusLabel:
-                    isPending ? 'Awaiting payment' : (AppLocalizations.of(context)?.paid ?? 'Paid'),
+                    isPending ? 'Awaiting payment' : 'Paid',
                 statusColor: isPending ? const Color(0xFF1E88E5) : const Color(0xFF2E7D32),
                 date: df.format(t ?? c.deadline),
                 leadingIcon: isPending ? Icons.verified_rounded : Icons.attach_money_rounded,

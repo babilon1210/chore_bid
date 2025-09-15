@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:chore_bid/pages/sign_up/email_verification_page.dart';
 import 'package:chore_bid/pages/splash_loader_page.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -22,14 +24,10 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController(); // <-- added
 
   bool _loading = false;
   String? _error;
-
-  // Google Sign-In instance
-  // final gsi.GoogleSignIn _googleSignIn = gsi.GoogleSignIn(
-  //   scopes: <String>['email'],
-  // );
 
   /// Resolve a currency symbol based on the current device locale.
   /// Requirement: IL -> ₪ ; defaults sensibly otherwise.
@@ -137,8 +135,24 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
       );
 
       if (user != null) {
-        await _postAuthCreateFamily(
-          displayNameFallback: _nameController.text.trim(),
+        // Send verification email
+        await _authService.sendVerificationEmail();
+
+        // Go to a waiting screen that auto-detects verification
+        if (!mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => EmailVerificationPage(
+              email: _emailController.text.trim(),
+              authService: _authService,
+              onVerified: () async {
+                await _postAuthCreateFamily(
+                  displayNameFallback: _nameController.text.trim(),
+                );
+              },
+            ),
+          ),
         );
       }
     } catch (e) {
@@ -187,21 +201,20 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
         // Show "already exists" dialog
         final proceed = await showDialog<bool>(
           context: context,
-          builder:
-              (ctx) => AlertDialog(
-                title: const Text('Account exists'),
-                content: const Text('This user already exists. Sign in?'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(false),
-                    child: const Text('No'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => Navigator.of(ctx).pop(true),
-                    child: const Text('Yes'),
-                  ),
-                ],
+          builder: (ctx) => AlertDialog(
+            title: const Text('Account exists'),
+            content: const Text('This user already exists. Sign in?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('No'),
               ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Yes'),
+              ),
+            ],
+          ),
         );
 
         if (proceed == true) {
@@ -238,6 +251,7 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose(); // <-- added
     super.dispose();
   }
 
@@ -249,87 +263,95 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
         appBar: AppBar(title: const Text('Parent info')),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
-          child:
-              _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : Form(
-                    key: _formKey,
-                    child: ListView(
-                      children: [
-                        TextFormField(
-                          controller: _nameController,
-                          decoration: const InputDecoration(labelText: 'Name'),
-                          validator:
-                              (val) =>
-                                  val == null || val.isEmpty
-                                      ? 'Enter your name'
-                                      : null,
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : Form(
+                  key: _formKey,
+                  child: ListView(
+                    children: [
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(labelText: 'Name'),
+                        validator: (val) =>
+                            val == null || val.isEmpty ? 'Enter your name' : null,
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: _emailController,
+                        decoration: const InputDecoration(labelText: 'Email'),
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (val) =>
+                            val == null || val.isEmpty || !val.contains('@')
+                                ? 'Invalid email'
+                                : null,
+                      ),
+                      TextFormField(
+                        controller: _passwordController,
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
                         ),
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          controller: _emailController,
-                          decoration: const InputDecoration(labelText: 'Email'),
-                          keyboardType: TextInputType.emailAddress,
-                          validator:
-                              (val) =>
-                                  val == null || !val.contains('@')
-                                      ? 'Invalid email'
-                                      : null,
+                        obscureText: true,
+                        validator: (val) =>
+                            val == null || val.length < 6 ? 'Too short' : null,
+                      ),
+                      TextFormField(
+                        controller: _confirmPasswordController,
+                        decoration: const InputDecoration(
+                          labelText: 'Confirm Password',
                         ),
-                        TextFormField(
-                          controller: _passwordController,
-                          decoration: const InputDecoration(
-                            labelText: 'Password',
-                          ),
-                          obscureText: true,
-                          validator:
-                              (val) =>
-                                  val == null || val.length < 6
-                                      ? 'Too short'
-                                      : null,
-                        ),
-                        const SizedBox(height: 12),
-                        ElevatedButton(
-                          onPressed: _registerEmailPassword,
-                          child: const Text('Create Family'),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: const [
-                            Expanded(child: Divider()),
-                            Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 8.0),
-                              child: Text('or'),
-                            ),
-                            Expanded(child: Divider()),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 48,
-                          child: OutlinedButton.icon(
-                            onPressed: _continueWithGoogle,
-                            icon: const Icon(Icons.g_mobiledata, size: 28),
-                            label: const Text(
-                              'Continue with Google',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Colors.black12),
-                            ),
-                          ),
-                        ),
-                        if (_error != null)
+                        obscureText: true,
+                        validator: (val) {
+                          if (val == null || val.isEmpty) {
+                            return 'Confirm your password';
+                          }
+                          if (val != _passwordController.text) {
+                            return 'Passwords do not match';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        onPressed: _registerEmailPassword,
+                        child: const Text('Create Family'),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: const [
+                          Expanded(child: Divider()),
                           Padding(
-                            padding: const EdgeInsets.only(top: 12.0),
-                            child: Text(
-                              _error!,
-                              style: const TextStyle(color: Colors.red),
-                            ),
+                            padding: EdgeInsets.symmetric(horizontal: 8.0),
+                            child: Text('or'),
                           ),
-                      ],
-                    ),
+                          Expanded(child: Divider()),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 48,
+                        child: OutlinedButton.icon(
+                          onPressed: _continueWithGoogle,
+                          icon: const Icon(Icons.g_mobiledata, size: 28),
+                          label: const Text(
+                            'Continue with Google',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.black12),
+                          ),
+                        ),
+                      ),
+                      if (_error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12.0),
+                          child: Text(
+                            _error!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
+                    ],
                   ),
+                ),
         ),
       ),
     );

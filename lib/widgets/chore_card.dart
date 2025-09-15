@@ -462,6 +462,8 @@ class ChoreCard extends StatelessWidget {
   }
 
   // ------- Inline action buttons (child view) -------
+  // KEEP: Only shows the centered CLAIM button when available.
+  // For the claimed state, we now render buttons at the BOTTOM BAR instead.
   Widget _childActionButtons({required bool isChild}) {
     if (!isChild) return const SizedBox.shrink();
     if (status == 'expired') return const SizedBox.shrink();
@@ -469,7 +471,7 @@ class ChoreCard extends StatelessWidget {
     final myRaw = getCurrentUserRawStatus();
     final available = _isAvailableForMe();
 
-    // Available → Claim
+    // Available → Claim (kept as before, centered inside the content area)
     if (available && onClaim != null) {
       return Padding(
         padding: const EdgeInsets.only(top: 8),
@@ -497,62 +499,74 @@ class ChoreCard extends StatelessWidget {
       );
     }
 
-    // Claimed → Unclaim + Done
-    if (myRaw == 'claimed' && (onUnclaim != null || onDone != null)) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: Center(
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: [
-              if (onUnclaim != null)
-                SizedBox(
-                  height: 34,
-                  child: OutlinedButton(
-                    onPressed: onUnclaim,
-                    child: const Text(
-                      'Unclaim',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.indigo,
-                      side: const BorderSide(color: Colors.indigo, width: 1.5),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                    ),
-                  ),
-                ),
-              if (onDone != null)
-                SizedBox(
-                  height: 34,
-                  child: ElevatedButton(
-                    onPressed: onDone,
-                    child: const Text(
-                      'Done',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2E7D32),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
+    // Claimed → bottom bar will handle it; return nothing here
+    if (myRaw == 'claimed') {
+      return const SizedBox.shrink();
     }
 
     // For complete/verified/paid (or unavailable), no buttons
     return const SizedBox.shrink();
+  }
+
+  // New: a full-width bottom bar with Unclaim | Done horizontally spread.
+  Widget? _childBottomBar({required bool isChild, required String? myRaw}) {
+    if (!isChild) return null;
+    if (status == 'expired') return null;
+    if (myRaw != 'claimed') return null;
+
+    final hasUnclaim = onUnclaim != null;
+    final hasDone = onDone != null;
+
+    if (!hasUnclaim && !hasDone) return null;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          if (hasUnclaim)
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: OutlinedButton(
+                  onPressed: onUnclaim,
+                  child: const Text(
+                    'Unclaim',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.indigo,
+                    side: const BorderSide(color: Colors.indigo, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (hasUnclaim && hasDone) const SizedBox(width: 10),
+          if (hasDone)
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: ElevatedButton(
+                  onPressed: onDone,
+                  child: const Text(
+                    'Done',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2E7D32),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -625,6 +639,8 @@ class ChoreCard extends StatelessWidget {
       );
     }
 
+    final bottomBar = _childBottomBar(isChild: isChild, myRaw: childRawStatus);
+
     return Card(
       color: getCardColor(),
       elevation: 3,
@@ -635,88 +651,94 @@ class ChoreCard extends StatelessWidget {
         onTap: onTap, // not used for child in Active tab anymore
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // LEFT: title + description + meta
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Text(
-                      title,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: Color.fromARGB(255, 30, 2, 49),
-                      ),
-                    ),
-
-                    // description (up to 2 lines)
-                    if (description.trim().isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        description.trim(),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: Color.fromARGB(255, 30, 2, 49),
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+              // TOP: two-column content
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // LEFT: title + description + meta
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Text(
-                          '$currencySymbol$reward', // <-- currency from FamilyService
+                          title,
+                          textAlign: TextAlign.center,
                           style: const TextStyle(
-                            fontSize: 12,
+                            fontSize: 17,
                             fontWeight: FontWeight.bold,
                             color: Color.fromARGB(255, 30, 2, 49),
                           ),
                         ),
-                        if (showBottomDeadline) ...[
+
+                        // description (up to 2 lines)
+                        if (description.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
                           Text(
-                            ' • $formattedDeadline',
+                            description.trim(),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
                               color: Color.fromARGB(255, 30, 2, 49),
                             ),
                           ),
                         ],
+
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              '$currencySymbol$reward', // <-- currency from FamilyService
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Color.fromARGB(255, 30, 2, 49),
+                              ),
+                            ),
+                            if (showBottomDeadline) ...[
+                              Text(
+                                ' • $formattedDeadline',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color.fromARGB(255, 30, 2, 49),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+
+                        // Keep inline Claim button (if available)
+                        _childActionButtons(isChild: isChild),
+
+                        // Bottom "Expired" badge (if applicable)
+                        if (!rightExpiredOnly &&
+                            !(isChild && childRawStatus == 'paid') &&
+                            !suppressBottomExpiredPill)
+                          _expiredBadgeBottom(),
                       ],
                     ),
+                  ),
 
-                    // Inline action buttons (child)
-                    _childActionButtons(isChild: isChild),
+                  const SizedBox(width: 12),
 
-                    // Bottom "Expired" badge is suppressed in these cases:
-                    // - rightExpiredOnly mode, OR
-                    // - paid items for child view, OR
-                    // - explicit suppression via prop.
-                    if (!showRightExpiredOnly &&
-                        !hideBottomExpiredForPaid &&
-                        !suppressBottomExpiredPill)
-                      _expiredBadgeBottom(),
-                  ],
-                ),
+                  // RIGHT: status panel + (optional) deadline lines
+                  Flexible(
+                    flex: 0,
+                    child: buildRightWidget(),
+                  ),
+                ],
               ),
 
-              const SizedBox(width: 12),
-
-              // RIGHT
-              Flexible(
-                flex: 0,
-                child: buildRightWidget(),
-              ),
+              // BOTTOM: horizontal action bar for claimed state
+              if (bottomBar != null) bottomBar,
             ],
           ),
         ),
