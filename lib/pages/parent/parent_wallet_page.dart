@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+
 import '../../models/chore_model.dart';
 import '../../services/user_service.dart';
 import '../../services/family_service.dart';
@@ -32,6 +33,9 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
 
   StreamSubscription<List<Chore>>? _choresSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _expiredSub;
+
+  // NEW: live children subscription
+  StreamSubscription<List<FamilyChild>>? _childrenSub;
 
   // currency (from FamilyService)
   StreamSubscription<String?>? _currencySub;
@@ -73,12 +77,24 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
       }
     });
 
-    // 1) Load child names once
-    final names = await _familySvc.getChildrenNamesMap(_familyId);
-    if (!mounted) return;
-    setState(() {
-      _childNames = names;
-      _selectedChildId ??= _childIds.isNotEmpty ? _childIds.first : null;
+    // NEW: Live children listener — updates immediately when children change
+    _childrenSub = _familySvc.childrenStream(_familyId).listen((children) {
+      if (!mounted) return;
+      // Build latest names map
+      final nextNames = <String, String>{
+        for (final c in children) c.uid: (c.name.isEmpty ? 'Child' : c.name),
+      };
+
+      // Preserve selection when possible; if the selected child was removed, pick first.
+      String? nextSelected = _selectedChildId;
+      if (nextSelected == null || !nextNames.containsKey(nextSelected)) {
+        nextSelected = nextNames.isNotEmpty ? (nextNames.keys.toList()..sort()).first : null;
+      }
+
+      setState(() {
+        _childNames = nextNames;
+        _selectedChildId = nextSelected;
+      });
     });
 
     // 2) Listen to active chores (family scope)
@@ -110,6 +126,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   void dispose() {
     _choresSub?.cancel();
     _expiredSub?.cancel();
+    _childrenSub?.cancel(); // NEW
     _currencySub?.cancel();
     _familySvc.dispose();
     super.dispose();
@@ -396,7 +413,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
               if (mounted) Navigator.pop(ctx);
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Paid')),
+                const SnackBar(content: Text('Paid')),
               );
             } catch (e) {
               setM(() => paying = false);
@@ -482,7 +499,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   Widget build(BuildContext context) {
     final childIds = _childIds;
 
-    // Ensure selection
+    // Ensure selection if children just arrived
     if (_selectedChildId == null && childIds.isNotEmpty) {
       _selectedChildId = childIds.first;
     }
@@ -581,7 +598,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
 
               const SizedBox(height: 12),
 
-              // Horizontal child tab chooser
+              // Horizontal child tab chooser (LIVE)
               if (childIds.isNotEmpty)
                 SizedBox(
                   height: 48,
@@ -627,12 +644,10 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
                   ),
                 )
               else
-                // No "Select a child" card when there are no children.
-                // If there are children but none selected (edge), show a small placeholder.
-                if (childIds.isNotEmpty)
-                  Expanded(child: _emptyState('Select a child'))
-                else
-                  const SizedBox.shrink(),
+                // Edge: if there are children but none selected
+                (childIds.isNotEmpty)
+                    ? Expanded(child: _emptyState('Select a child'))
+                    : const SizedBox.shrink(),
             ],
           ),
         ),
@@ -870,13 +885,12 @@ class _SelectedChildPane extends StatelessWidget {
               return _walletTile(
                 title: c.title,
                 amount: money(int.tryParse(c.reward) ?? 0),
-                statusLabel:
-                    isPending ? 'Awaiting payment' : 'Paid',
+                statusLabel: isPending ? 'Awaiting payment' : 'Paid',
                 statusColor: isPending ? const Color(0xFF1E88E5) : const Color(0xFF2E7D32),
                 date: df.format(t ?? c.deadline),
                 leadingIcon: isPending ? Icons.verified_rounded : Icons.attach_money_rounded,
                 leadingColor: isPending ? const Color(0xFF1E88E5) : const Color(0xFF2E7D32),
-                onTap: isPending ? () => onPaySingle(c) : null, // <-- tap whole card to pay
+                onTap: isPending ? () => onPaySingle(c) : null, // tap whole card to pay
               );
             },
           ),
@@ -886,7 +900,6 @@ class _SelectedChildPane extends StatelessWidget {
   }
 
   // Row layout → icon | (title + amount) | (pill + date)
-  // Now tappable when onTap != null (pending items).
   Widget _walletTile({
     required String title,
     required String amount,
@@ -901,7 +914,7 @@ class _SelectedChildPane extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap, // full-card tap
+        onTap: onTap,
         borderRadius: radius,
         child: Container(
           decoration: BoxDecoration(
@@ -925,7 +938,7 @@ class _SelectedChildPane extends StatelessWidget {
                 child: Icon(leadingIcon, color: leadingColor),
               ),
               const SizedBox(width: 12),
-              // Title + Amount (center)
+              // Title + Amount
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
