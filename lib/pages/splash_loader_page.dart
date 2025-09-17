@@ -1,5 +1,7 @@
+import 'package:chore_bid/pages/auth_gate_page.dart';
 import 'package:chore_bid/pages/child/child_home_page.dart';
 import 'package:chore_bid/pages/sign_up/role_selection_page.dart';
+import 'package:chore_bid/services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/user_service.dart';
@@ -25,14 +27,15 @@ class _SplashLoaderPageState extends State<SplashLoaderPage> {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      _goToRegister();
+      _goToAuthGate();
       return;
     }
 
     final userModel = await _userService.getCurrentUserProfile();
 
     if (userModel == null) {
-      _goToRegister();
+      AuthService().logout();
+      _goToAuthGate();
       return;
     }
 
@@ -44,9 +47,9 @@ class _SplashLoaderPageState extends State<SplashLoaderPage> {
     _goToHome();
   }
 
-  void _goToRegister() {
+  void _goToAuthGate() {
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => RoleSelectionPage()),
+      MaterialPageRoute(builder: (_) => AuthGatePage()),
       (route) => false,
     );
   }
@@ -57,7 +60,7 @@ class _SplashLoaderPageState extends State<SplashLoaderPage> {
       MaterialPageRoute(
         builder: (_) => isParent ? const HomePage() : const ChildHomePage(),
       ),
-      (route) => false, 
+      (route) => false,
     );
   }
 
