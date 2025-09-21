@@ -60,24 +60,16 @@ class _SignInPageState extends State<SignInPage> {
 
     try {
       // 1) Native Google sign-in (Android/iOS)
-      final googleUser = await gsi.GoogleSignIn.instance.authenticate();
-      if (googleUser == null) {
-        // user cancelled
-        if (mounted) setState(() => _loading = false);
-        return;
-      }
-      final googleAuth = await googleUser.authentication;
+      final googleProvider = GoogleAuthProvider();
+      googleProvider.addScope(
+        'profile',
+      ); // Add this to request the user's profile info
+      googleProvider.addScope('email'); // Optional: ensure email is included
 
-      // 2) Exchange tokens for Firebase credential
-      final credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-        accessToken: googleAuth.idToken,
-      );
+      final UserCredential credResult = await FirebaseAuth.instance
+          .signInWithProvider(googleProvider);
 
-      final credResult = await FirebaseAuth.instance.signInWithCredential(
-        credential,
-      );
-      final firebaseUser = credResult.user;
+      final User? firebaseUser = credResult.user;
       if (firebaseUser == null) {
         throw Exception('Firebase sign-in failed');
       }
@@ -89,7 +81,9 @@ class _SignInPageState extends State<SignInPage> {
               .doc(firebaseUser.uid)
               .get();
 
-      if (doc.exists) {
+      print(firebaseUser.uid);
+      if (doc.exists &&
+          (doc.data()!['familyId'] as String?)?.isNotEmpty == true) {
         // Known user -> continue into app
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(

@@ -163,89 +163,73 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
   }
 
   Future<void> _continueWithGoogle() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  setState(() {
+    _loading = true;
+    _error = null;
+  });
 
-    try {
-      // 1) Native Google sign-in (Android/iOS)
-      final googleUser = await gsi.GoogleSignIn.instance.authenticate();
-      if (googleUser == null) {
-        // user cancelled
-        if (mounted) setState(() => _loading = false);
-        return;
-      }
-      final googleAuth = await googleUser.authentication;
+  try {
+    // 1) Build provider and start sign-in flow.
+    final googleProvider = GoogleAuthProvider();
+    googleProvider.addScope('profile'); // Add this to request the user's profile info
+    googleProvider.addScope('email');   // Optional: ensure email is included
 
-      // 2) Exchange tokens for Firebase credential
-      final credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-        accessToken: googleAuth.idToken,
-      );
+    final UserCredential credResult =
+        await FirebaseAuth.instance.signInWithProvider(googleProvider);
 
-      final credResult = await FirebaseAuth.instance.signInWithCredential(
-        credential,
-      );
-      final firebaseUser = credResult.user;
-      if (firebaseUser == null) {
-        throw Exception('Firebase sign-in failed');
-      }
-
-      // 3) BEFORE creating a family: check if profile already exists
-      final uid = firebaseUser.uid;
-      final userDoc =
-          await FirebaseFirestore.instance.collection('users').doc(uid).get();
-
-      if (userDoc.exists) {
-        // Show "already exists" dialog
-        final proceed = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Account exists'),
-            content: const Text('This user already exists. Sign in?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('No'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Yes'),
-              ),
-            ],
-          ),
-        );
-
-        if (proceed == true) {
-          if (!mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const SplashLoaderPage()),
-            (route) => false,
-          );
-        } else {
-          // User chose "No" -> sign out both Firebase & Google
-          await _authService.logout();
-          await gsi.GoogleSignIn.instance.signOut();
-          if (mounted) setState(() => _loading = false);
-        }
-        return; // Important: do NOT create a family here
-      }
-
-      // 4) No profile yet -> create family + profile
-      await _postAuthCreateFamily(
-        displayNameFallback:
-            _nameController.text.trim().isNotEmpty
-                ? _nameController.text.trim()
-                : (googleUser.displayName ?? 'Parent'),
-      );
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    final User? firebaseUser = credResult.user;
+    if (firebaseUser == null) {
+      throw Exception('Firebase sign-in failed');
     }
-  }
 
+    // 2) Check if profile already exists
+    final uid = firebaseUser.uid;
+    final userDoc =
+        await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    if (userDoc.exists && (userDoc.data()!['familyId'] as String?)?.isNotEmpty == true) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Account exists'),
+          content: const Text('This user already exists. Sign in?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('No'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Yes'),
+            ),
+          ],
+        ),
+      );
+
+      if (proceed == true) {
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const SplashLoaderPage()),
+          (route) => false,
+        );
+      } else {
+        await _authService.logout();
+        if (mounted) setState(() => _loading = false);
+      }
+      return;
+    }
+
+    // 3) New user -> create family & profile
+    await _postAuthCreateFamily(
+      displayNameFallback: firebaseUser.displayName ?? (_nameController.text.trim().isNotEmpty
+          ? _nameController.text.trim() :
+           'Parent'),
+    );
+  } catch (e) {
+    setState(() => _error = e.toString());
+  } finally {
+    if (mounted) setState(() => _loading = false);
+  }
+}
   @override
   void dispose() {
     _nameController.dispose();

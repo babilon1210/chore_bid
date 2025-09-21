@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
+import 'package:chore_bid/pages/parent/parent_settings_page.dart';
+
 import '../../models/chore_model.dart';
 import '../../services/user_service.dart';
 import '../../services/family_service.dart';
@@ -34,7 +36,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   StreamSubscription<List<Chore>>? _choresSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _expiredSub;
 
-  // NEW: live children subscription
+  // Live children subscription
   StreamSubscription<List<FamilyChild>>? _childrenSub;
 
   // currency (from FamilyService)
@@ -77,7 +79,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
       }
     });
 
-    // NEW: Live children listener — updates immediately when children change
+    // Live children listener — updates immediately when children change
     _childrenSub = _familySvc.childrenStream(_familyId).listen((children) {
       if (!mounted) return;
       // Build latest names map
@@ -97,13 +99,13 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
       });
     });
 
-    // 2) Listen to active chores (family scope)
+    // Active chores (family scope)
     _choresSub = _choreSvc.listenToChores(_familyId).listen((list) {
       if (!mounted) return;
       setState(() => _activeChores = list);
     });
 
-    // 3) Also keep recent expired to show recently-paid items (last 60d)
+    // Recent expired (last 60d)
     final cutoff = DateTime.now().subtract(const Duration(days: 60));
     _expiredSub = FirebaseFirestore.instance
         .collection('families')
@@ -126,10 +128,25 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
   void dispose() {
     _choresSub?.cancel();
     _expiredSub?.cancel();
-    _childrenSub?.cancel(); // NEW
+    _childrenSub?.cancel();
     _currencySub?.cancel();
     _familySvc.dispose();
     super.dispose();
+  }
+
+  // ----- navigation to Add Child (same behavior as in CreateChoreBidPage) -----
+  Future<void> _goToAddChild() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const ParentSettingsPage(openAddChildOnOpen: true),
+      ),
+    );
+    // Children list will auto-refresh via _childrenSub.
+    if (_childNames.isEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No children were added. Please add a child to proceed.')),
+      );
+    }
   }
 
   // ----- helpers for progress schema (keeps legacy fallback) -----
@@ -598,33 +615,32 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
 
               const SizedBox(height: 12),
 
+              // If no children, show add-child prompt (navigates like CreateChoreBidPage)
+              if (childIds.isEmpty) _noChildrenCard() else
               // Horizontal child tab chooser (LIVE)
-              if (childIds.isNotEmpty)
-                SizedBox(
-                  height: 48,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: childIds.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (_, i) {
-                      final id = childIds[i];
-                      final name = _childNames[id] ?? 'Child';
-                      final selected = id == selectedId;
-                      return _ChildTabChip(
-                        name: name,
-                        selected: selected,
-                        onTap: () => setState(() => _selectedChildId = id),
-                      );
-                    },
-                  ),
-                )
-              else
-                _emptyState('No children in family'),
+              SizedBox(
+                height: 48,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: childIds.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) {
+                    final id = childIds[i];
+                    final name = _childNames[id] ?? 'Child';
+                    final selected = id == selectedId;
+                    return _ChildTabChip(
+                      name: name,
+                      selected: selected,
+                      onTap: () => setState(() => _selectedChildId = id),
+                    );
+                  },
+                ),
+              ),
 
               const SizedBox(height: 12),
 
               // CONTENT for selected child
-              if (selectedId != null)
+              if (selectedId != null && childIds.isNotEmpty)
                 Expanded(
                   child: _SelectedChildPane(
                     childId: selectedId,
@@ -633,7 +649,7 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
                     pending: _pendingInRangeFor(selectedId),
                     paidInRange: _paidInRangeFor(selectedId),
                     df: _df,
-                    money: _money, // <-- pass symbolized formatter
+                    money: _money,
                     timeFor: (chore) => _timeFor(chore, selectedId),
                     onPayAll: (chores) => _openPaySheet(childId: selectedId, chores: chores),
                     onPaySingle: (chore) => _openPaySheet(
@@ -643,11 +659,8 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
                     ),
                   ),
                 )
-              else
-                // Edge: if there are children but none selected
-                (childIds.isNotEmpty)
-                    ? Expanded(child: _emptyState('Select a child'))
-                    : const SizedBox.shrink(),
+              else if (childIds.isNotEmpty)
+                Expanded(child: _emptyState('Select a child')),
             ],
           ),
         ),
@@ -746,6 +759,24 @@ class _ParentWalletPageState extends State<ParentWalletPage> {
             fontWeight: FontWeight.w600,
             color: Color(0xFF0B102F),
           ),
+        ),
+      ),
+    );
+  }
+
+  // New: “No children” prompt with Add Child button (mirrors CreateChoreBidPage UX)
+  Widget _noChildrenCard() {
+    return Card(
+      color: const Color.fromARGB(255, 255, 238, 186),
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: ListTile(
+        leading: const Icon(Icons.info_outline),
+        title: const Text('No children in family'),
+        subtitle: const Text('Add a child to view wallet details'),
+        trailing: TextButton(
+          onPressed: _goToAddChild,
+          child: const Text('Add Child'),
         ),
       ),
     );

@@ -231,32 +231,23 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
 
     try {
-      final googleUser = await gsi.GoogleSignIn.instance.authenticate();
-      if (googleUser == null) {
-        if (mounted) setState(() => _loading = false);
-        return;
-      }
-      final googleAuth = await googleUser.authentication;
+      final googleProvider = GoogleAuthProvider();
+    googleProvider.addScope('profile'); // Add this to request the user's profile info
+    googleProvider.addScope('email');   // Optional: ensure email is included
 
-      final credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-        // Keeping your original logic
-        accessToken: googleAuth.idToken,
-      );
+    final UserCredential credResult =
+        await FirebaseAuth.instance.signInWithProvider(googleProvider);
 
-      final credResult =
-          await FirebaseAuth.instance.signInWithCredential(credential);
-      final firebaseUser = credResult.user;
-      if (firebaseUser == null) {
-        throw Exception('Firebase sign-in failed');
-      }
+    final User? firebaseUser = credResult.user;
+    if (firebaseUser == null) {
+      throw Exception('Firebase sign-in failed');
+    }
 
-      // BEFORE creating/joining: check if profile exists
-      final uid = firebaseUser.uid;
-      final userDoc =
-          await FirebaseFirestore.instance.collection('users').doc(uid).get();
-
-      if (userDoc.exists) {
+    // 2) Check if profile already exists
+    final uid = firebaseUser.uid;
+    final userDoc =
+        await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    if (userDoc.exists && (userDoc.data()!['familyId'] as String?)?.isNotEmpty == true) {
         final proceed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -294,7 +285,9 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           FirebaseFunctions.instance.httpsCallable('createUserWithFamily');
       await callable.call({
         'role': 'parent',
-        'name': (googleUser.displayName ?? 'Parent'),
+        'name': (firebaseUser.displayName ?? (_nameController.text.trim().isNotEmpty
+          ? _nameController.text.trim() :
+           'Parent')),
         'familyId': familyId, // <— join the scanned family
       });
 
