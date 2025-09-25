@@ -22,6 +22,14 @@
           }
         },
         {
+          "client_id": "605689934779-klu2i4m8a0dpicbusobjfhn7ph9p305q.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.eitan.chorebid",
+            "certificate_hash": "9c6d28e4af5d5e8df9b45446789def20f730ebbb"
+          }
+        },
+        {
           "client_id": "605689934779-jlugb09mq4hj5deo0r7d5d8nk0bjds8r.apps.googleusercontent.com",
           "client_type": 3
         }
