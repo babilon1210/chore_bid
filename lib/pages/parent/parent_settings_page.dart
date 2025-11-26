@@ -38,7 +38,6 @@ class _ParentSettingsPageState extends State<ParentSettingsPage> {
   }
 }
 
-/// Embeddable settings content (no Scaffold, no AppBar).
 class ParentSettingsView extends StatefulWidget {
   final bool openAddChildOnOpen;
 
@@ -53,30 +52,27 @@ class ParentSettingsView extends StatefulWidget {
 
 class _ParentSettingsViewState extends State<ParentSettingsView> {
   bool _showFamilyQR = false;
-  bool _childrenExpanded = false; // children dropdown
-  bool _invitesExpanded = false; // invites dropdown
+  bool _childrenExpanded = false;
+  bool _invitesExpanded = false;
 
   final _familySvc = FamilyService();
   final _inviteSvc = InviteService();
   final _signInSvc = SignInService();
-  final _authService = AuthService(); // <-- added
-  bool _signingOut = false; // <-- added
+  final _authService = AuthService();
+  bool _signingOut = false;
 
   final Uri _policyUri = Uri.parse(
-    'https://babilon1210.github.io/chorebid-privacy/',
+    'https://chore-bid.com/privacy',
   );
 
-  // ----- Currency edit state -----
-  String? _pendingCurrency; // user-picked (not yet saved)
+  String? _pendingCurrency;
   bool _savingCurrency = false;
 
-  // App palette helpers
   static const _darkInk = Color.fromARGB(255, 11, 16, 47);
   static const _cardYellow = Color.fromARGB(255, 253, 247, 193);
   static const _accentYellow = Color.fromARGB(255, 244, 190, 71);
   static const _dropdownFill = Color.fromARGB(255, 255, 251, 220);
 
-  // A compact curated list of currencies (value is what will be saved & prefixed)
   static const List<_Currency> _currencyOptions = [
     _Currency(r'$', 'US Dollar (\$)'),
     _Currency('€', 'Euro (€)'),
@@ -96,14 +92,11 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
   @override
   void initState() {
     super.initState();
-
-    // Begin listening to family for live currency updates
     final familyId = UserService.currentUser?.familyId;
     if (familyId != null && familyId.isNotEmpty) {
       _familySvc.listenToFamily(familyId);
     }
 
-    // Auto-open the Add Child sheet if requested
     if (widget.openAddChildOnOpen) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _openAddChildSheet());
     }
@@ -136,7 +129,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
       return;
     }
 
-    // Bottom sheet to create a sign-up QR (name only)
     final result = await showModalBottomSheet<Map<String, String>>(
       context: context,
       isScrollControlled: true,
@@ -155,7 +147,7 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
 
   void _cancelCurrencyEdit() {
     setState(() {
-      _pendingCurrency = null; // discard changes (revert to stream value)
+      _pendingCurrency = null;
     });
   }
 
@@ -179,7 +171,7 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
         const SnackBar(content: Text('Currency updated')),
       );
       setState(() {
-        _pendingCurrency = null; // now matches stream; hide action buttons
+        _pendingCurrency = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -305,7 +297,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
     }
   }
 
-  // ----- Logout (via AuthService) -----
   Future<void> _logout() async {
     if (_signingOut) return;
     setState(() => _signingOut = true);
@@ -330,7 +321,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
     final familyId = user?.familyId ?? '';
     final qrData = {"familyId": familyId};
 
-    // Streams come from FamilyService (no direct Firestore queries here)
     final invitesStream = _familySvc.pendingChildInvitesStream(familyId);
     final childrenStream = _familySvc.childrenStream(familyId);
 
@@ -338,7 +328,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
       padding: const EdgeInsets.all(20.0),
       child: Column(
         children: [
-          // Family QR toggle
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
@@ -351,14 +340,12 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
           if (_showFamilyQR)
             Center(
               child: QrImageView(
-                data: qrData.toString(), // existing scanner compat
+                data: jsonEncode(qrData), // <-- FIXED HERE
                 version: QrVersions.auto,
                 size: 200.0,
               ),
             ),
           const SizedBox(height: 12),
-
-          // ----- Reward Currency Card (smaller + info icon) -----
           StreamBuilder<String?>(
             stream: _familySvc.currencyStream,
             builder: (context, snap) {
@@ -367,13 +354,14 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
               final changed =
                   _pendingCurrency != null && _pendingCurrency != current;
 
-              // Build items; ensure the selected value exists even if custom
               final items = <DropdownMenuItem<String>>[
                 if (!_currencyOptions.any((c) => c.value == displayValue))
                   DropdownMenuItem(
                     value: displayValue,
-                    child: Text('Current: $displayValue',
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    child: Text(
+                      'Current: $displayValue',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ..._currencyOptions.map(
                   (c) => DropdownMenuItem(
@@ -393,7 +381,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Header with info icon (top-right)
                       Row(
                         children: [
                           const Icon(Icons.monetization_on_outlined,
@@ -431,9 +418,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
                           ),
                         ],
                       ),
-                      //const SizedBox(height: 10),
-
-                      // Compact dropdown container
                       Container(
                         decoration: BoxDecoration(
                           color: _dropdownFill,
@@ -465,8 +449,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
                           ),
                         ),
                       ),
-
-                      // Save / Cancel row appears only when there’s a change
                       if (changed) ...[
                         const SizedBox(height: 12),
                         Row(
@@ -506,10 +488,7 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
               );
             },
           ),
-
           const SizedBox(height: 12),
-
-          // MAIN AREA (fills until the bottom button)
           Expanded(
             child: StreamBuilder<List<ChildInvite>>(
               stream: invitesStream,
@@ -531,7 +510,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
                     }
                     final children = chSnap.data ?? <FamilyChild>[];
 
-                    // Build the children dropdown card (with count chip)
                     final childrenCard = _ChildrenCardExpandable(
                       title: 'Children',
                       children: children,
@@ -545,7 +523,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
                       ),
                     );
 
-                    // Build the invites dropdown card
                     final invitesCard = _InvitesCardExpandable(
                       title: 'Pending sign ups',
                       invites: invites,
@@ -555,18 +532,14 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
                       onShowQr: (inv) => _showSignUpQr(inv.code, inv.name),
                     );
 
-                    // Only show invites if there are any AND children list is collapsed.
                     final showInvites = invites.isNotEmpty && !_childrenExpanded;
 
-                    // Order: Children first, then Pending sign ups (only if visible)
                     return Column(
                       children: [
-                        // Children dropdown
                         if (_childrenExpanded)
                           Expanded(child: childrenCard)
                         else
                           childrenCard,
-
                         if (showInvites) ...[
                           const SizedBox(height: 12),
                           if (_invitesExpanded)
@@ -581,10 +554,7 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
               },
             ),
           ),
-
           const SizedBox(height: 12),
-
-          // Bottom actions: Privacy policy + Log out
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -619,61 +589,6 @@ class _ParentSettingsViewState extends State<ParentSettingsView> {
   }
 }
 
-/// A reusable section card (kept for consistency; not used by invites now).
-class _SectionCard extends StatelessWidget {
-  final String title;
-  final String emptyText;
-  final List<Widget> children;
-
-  const _SectionCard({
-    required this.title,
-    required this.emptyText,
-    required this.children,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: _ParentSettingsViewState._cardYellow,
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                color: _ParentSettingsViewState._darkInk,
-              ),
-            ),
-            const SizedBox(height: 6),
-            if (children.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                child: Text(
-                  'No items',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black54,
-                  ),
-                ),
-              )
-            else
-              ...children,
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Expandable "Children" card with inline + button next to the title.
-/// - Parent passes [expanded] and wraps in Expanded when true.
-/// - When expanded, the internal list scrolls to fill available height.
 class _ChildrenCardExpandable extends StatelessWidget {
   final String title;
   final List<FamilyChild> children;
@@ -704,10 +619,8 @@ class _ChildrenCardExpandable extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row: title + small count chip, small "+" icon, and chevron
             Row(
               children: [
-                // Tap area for expand/collapse (icon + title + count chip)
                 Expanded(
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
@@ -730,7 +643,6 @@ class _ChildrenCardExpandable extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          // Count chip next to "Children" title
                           Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 4),
@@ -751,20 +663,18 @@ class _ChildrenCardExpandable extends StatelessWidget {
                     ),
                   ),
                 ),
-                // Small + icon next to the title
                 IconButton(
                   onPressed: onAddChild,
                   icon: const Icon(Icons.add_circle_outline),
                   tooltip: 'Add Child',
                   splashRadius: 20,
                 ),
-                // Chevron (also toggles on tap)
                 InkWell(
                   borderRadius: BorderRadius.circular(12),
                   onTap: onToggle,
                   child: AnimatedRotation(
                     duration: const Duration(milliseconds: 180),
-                    turns: expanded ? 0.5 : 0.0, // chevron flip
+                    turns: expanded ? 0.5 : 0.0,
                     child: const Icon(
                       Icons.expand_more,
                       color: _ParentSettingsViewState._darkInk,
@@ -774,8 +684,6 @@ class _ChildrenCardExpandable extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 6),
-
-            // Content area
             if (!expanded)
               const Text(
                 'Tap to show your children',
@@ -785,8 +693,6 @@ class _ChildrenCardExpandable extends StatelessWidget {
                 ),
               )
             else
-              // Expanded: parent already wrapped this whole card with Expanded,
-              // so we can safely use Expanded here to fill the card.
               Expanded(
                 child: children.isEmpty
                     ? const Center(
@@ -809,9 +715,8 @@ class _ChildrenCardExpandable extends StatelessWidget {
                               visualDensity: VisualDensity.compact,
                             ),
                             child: ExpansionTile(
-                              tilePadding: const EdgeInsets.symmetric(
-                                horizontal: 4.0,
-                              ),
+                              tilePadding:
+                                  const EdgeInsets.symmetric(horizontal: 4.0),
                               title: Text(
                                 child.name,
                                 style: const TextStyle(
@@ -872,7 +777,6 @@ class _ChildrenCardExpandable extends StatelessWidget {
   }
 }
 
-/// Expandable "Pending sign ups" card (dropdown).
 class _InvitesCardExpandable extends StatelessWidget {
   final String title;
   final List<ChildInvite> invites;
@@ -901,7 +805,6 @@ class _InvitesCardExpandable extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row with count chip and chevron
             InkWell(
               borderRadius: BorderRadius.circular(12),
               onTap: onToggle,
@@ -916,7 +819,7 @@ class _InvitesCardExpandable extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        title, // "Pending sign ups"
+                        title,
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
@@ -924,7 +827,6 @@ class _InvitesCardExpandable extends StatelessWidget {
                         ),
                       ),
                     ),
-                    // Small count chip
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
@@ -954,8 +856,6 @@ class _InvitesCardExpandable extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-
-            // Content area
             if (!expanded)
               const Text(
                 'Tap to show pending sign ups',
@@ -1017,7 +917,6 @@ class _InvitesCardExpandable extends StatelessWidget {
   }
 }
 
-/// Bottom-sheet widget for adding a child (Name only → create non-expiring invite QR)
 class _AddChildSheet extends StatefulWidget {
   final String familyId;
   const _AddChildSheet({required this.familyId});
@@ -1033,7 +932,7 @@ class _AddChildSheetState extends State<_AddChildSheet> {
   bool _busy = false;
   String? _error;
 
-  String? _inviteCode; // returned from CF
+  String? _inviteCode;
   String get _qrPayload =>
       jsonEncode({'v': 1, 'type': 'invite', 'code': _inviteCode});
 
@@ -1081,7 +980,7 @@ class _AddChildSheetState extends State<_AddChildSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.of(context).viewInsets.bottom; // keyboard padding
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: Padding(
@@ -1105,7 +1004,6 @@ class _AddChildSheetState extends State<_AddChildSheet> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Drag handle
                   Container(
                     width: 40,
                     height: 4,
@@ -1124,7 +1022,6 @@ class _AddChildSheetState extends State<_AddChildSheet> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   if (_inviteCode == null) ...[
                     Form(
                       key: _formKey,
@@ -1200,7 +1097,6 @@ class _AddChildSheetState extends State<_AddChildSheet> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Live watch of invite usage (service-based)
                     StreamBuilder<InviteStatus>(
                       stream: InviteService().watchInvite(_inviteCode!),
                       builder: (_, snap) {
@@ -1229,7 +1125,6 @@ class _AddChildSheetState extends State<_AddChildSheet> {
                         return const SizedBox.shrink();
                       },
                     ),
-
                     const SizedBox(height: 8),
                     const Text(
                       'Single-use • No expiry (valid until used)',
@@ -1270,7 +1165,7 @@ class _WatchingQrDialog<T> extends StatefulWidget {
   final String? subtitle;
   final Stream<T> Function() statusBuilder;
   final Widget Function(T status) renderStatus;
-  final bool Function(T status)? autoCloseWhen; // close after success
+  final bool Function(T status)? autoCloseWhen;
 
   const _WatchingQrDialog({
     required this.title,
@@ -1332,7 +1227,6 @@ class _WatchingQrDialogState<T> extends State<_WatchingQrDialog<T>> {
                 final status = snap.data as T;
                 final w = widget.renderStatus(status);
 
-                // Auto-close on success
                 final shouldClose =
                     widget.autoCloseWhen?.call(status) ?? false;
                 if (shouldClose) {
@@ -1384,7 +1278,7 @@ class _StatusRow extends StatelessWidget {
 }
 
 class _Currency {
-  final String value; // what we store in Firestore & prefix before amounts
-  final String label; // what we show in the dropdown
+  final String value;
+  final String label;
   const _Currency(this.value, this.label);
 }

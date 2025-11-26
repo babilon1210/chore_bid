@@ -21,7 +21,6 @@ class _ChildQrSignInPageState extends State<ChildQrSignInPage> {
   @override
   void reassemble() {
     super.reassemble();
-    // iOS doesn’t need this, but it’s harmless
     _controller?.pauseCamera();
     _controller?.resumeCamera();
   }
@@ -32,6 +31,37 @@ class _ChildQrSignInPageState extends State<ChildQrSignInPage> {
     super.dispose();
   }
 
+  /// Tries to parse proper JSON first.
+  /// If the string looks like "{familyId: abc}" (Dart-style map .toString()),
+  /// we do a tiny normalization to JSON.
+  Map<String, dynamic>? _tryParseJsonish(String raw) {
+    // 1) real JSON
+    try {
+      final obj = jsonDecode(raw);
+      if (obj is Map<String, dynamic>) return obj;
+    } catch (_) {
+      // ignore and try next
+    }
+
+    // 2) handle "{familyId: xyz}" style
+    final trimmed = raw.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}') && trimmed.contains(':')) {
+      // Very naive normalization: {familyId: abc} -> {"familyId":"abc"}
+      // This is just to avoid crashing on the old parent QR.
+      final withoutBraces = trimmed.substring(1, trimmed.length - 1); // familyId: abc
+      final parts = withoutBraces.split(':');
+      if (parts.length == 2) {
+        final key = parts[0].trim();
+        final value = parts[1].trim();
+        return {
+          key.replaceAll('"', ''): value.replaceAll('"', ''),
+        };
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _handleScan(String raw) async {
     if (_busy || _done) return;
     setState(() {
@@ -40,21 +70,38 @@ class _ChildQrSignInPageState extends State<ChildQrSignInPage> {
     });
 
     try {
-      // Expecting {"v":1,"type":"signin","code":"..."}
       String? code;
-      try {
-        final obj = jsonDecode(raw);
-        if (obj is Map && obj['type'] == 'signin' && obj['code'] is String) {
+
+      // Try to understand what we got
+      final obj = _tryParseJsonish(raw);
+
+      if (obj != null) {
+        // We got a structured object
+        final type = obj['type'];
+        if (type == 'signin' && obj['code'] is String) {
           code = obj['code'] as String;
+        } else if (type == 'invite') {
+          // Parent showed "Sign-up QR", child is trying to scan on sign-IN page
+          throw Exception('This is a ChoreBid sign-up QR. Ask parent for “Sign-in QR”.');
+        } else if (obj['familyId'] != null) {
+          // This is the family QR
+          throw Exception('This QR is for joining/viewing a family, not for child sign-in.');
+        } else {
+          // some other structured QR
+          throw Exception('Not a ChoreBid sign-in QR.');
         }
-      } catch (_) {
-        // Fallback: accept raw code if it looks like one
-        if (raw.trim().length >= 12) code = raw.trim();
+      } else {
+        // Fallback: accept raw code if long enough
+        if (raw.trim().length >= 12) {
+          code = raw.trim();
+        }
       }
+
       if (code == null) {
         throw Exception('Not a ChoreBid sign-in QR.');
       }
 
+      // consume code via CF
       final callable =
           FirebaseFunctions.instance.httpsCallable('consumeChildSignInCode');
       final res = await callable.call({'code': code});
