@@ -7,6 +7,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:chore_bid/services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart' as gsi;
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'dart:ui' as ui;
 
 class RegisterCreateFamilyPage extends StatefulWidget {
@@ -162,31 +164,66 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
     }
   }
 
-  Future<void> _continueWithGoogle() async {
+Future<void> _continueWithGoogle() async {
   setState(() {
     _loading = true;
     _error = null;
   });
 
   try {
-    // 1) Build provider and start sign-in flow.
-    final googleProvider = GoogleAuthProvider();
-    googleProvider.addScope('profile'); // Add this to request the user's profile info
-    googleProvider.addScope('email');   // Optional: ensure email is included
+    UserCredential credResult;
 
-    final UserCredential credResult =
-        await FirebaseAuth.instance.signInWithProvider(googleProvider);
+    if (kIsWeb) {
+      // WEB: use Firebase popup (no redirect page, so no sessionStorage bug)
+      final googleProvider = GoogleAuthProvider()
+        ..addScope('email')
+        ..addScope('profile')
+        ..setCustomParameters(<String, String>{
+          'prompt': 'select_account',
+        });
+
+      credResult = await FirebaseAuth.instance.signInWithPopup(googleProvider);
+    } else {
+      // MOBILE (Android/iOS): use google_sign_in v7.x singleton API
+      final gsi.GoogleSignIn signIn = gsi.GoogleSignIn.instance;
+
+      // Optional, but recommended: configure/initialize once.
+      // If you have a specific clientId/serverClientId, pass them here.
+      await signIn.initialize();
+
+      if (!signIn.supportsAuthenticate()) {
+        throw Exception(
+          'GoogleSignIn.authenticate() is not supported on this platform.',
+        );
+      }
+
+      // Start interactive sign-in flow
+      final gsi.GoogleSignInAccount user = await signIn.authenticate();
+
+      // Get tokens for Firebase
+      final gsi.GoogleSignInAuthentication googleAuth = await user.authentication;
+
+      final OAuthCredential credential = GoogleAuthProvider.credential(
+        idToken: googleAuth.idToken,
+      );
+
+      credResult =
+          await FirebaseAuth.instance.signInWithCredential(credential);
+    }
 
     final User? firebaseUser = credResult.user;
     if (firebaseUser == null) {
       throw Exception('Firebase sign-in failed');
     }
 
-    // 2) Check if profile already exists
+    // --- your existing logic from here down ---
+
     final uid = firebaseUser.uid;
     final userDoc =
         await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    if (userDoc.exists && (userDoc.data()!['familyId'] as String?)?.isNotEmpty == true) {
+
+    if (userDoc.exists &&
+        (userDoc.data()!['familyId'] as String?)?.isNotEmpty == true) {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -218,11 +255,11 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
       return;
     }
 
-    // 3) New user -> create family & profile
     await _postAuthCreateFamily(
-      displayNameFallback: firebaseUser.displayName ?? (_nameController.text.trim().isNotEmpty
-          ? _nameController.text.trim() :
-           'Parent'),
+      displayNameFallback: firebaseUser.displayName ??
+          (_nameController.text.trim().isNotEmpty
+              ? _nameController.text.trim()
+              : 'Parent'),
     );
   } catch (e) {
     setState(() => _error = e.toString());
@@ -230,6 +267,8 @@ class _RegisterCreateFamilyPageState extends State<RegisterCreateFamilyPage> {
     if (mounted) setState(() => _loading = false);
   }
 }
+
+
   @override
   void dispose() {
     _nameController.dispose();

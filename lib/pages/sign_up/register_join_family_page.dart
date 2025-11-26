@@ -9,6 +9,7 @@ import 'package:chore_bid/pages/qr_scanner_page.dart';
 import 'package:chore_bid/services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart' as gsi;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class RegisterJoinFamilyPage extends StatefulWidget {
   final String role; // 'child' or 'parent'
@@ -70,9 +71,10 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
 
       final callable = FirebaseFunctions.instance.httpsCallable('redeemCode');
       final res = await callable.call({'code': code});
-      final data = (res.data is Map)
-          ? Map<String, dynamic>.from(res.data)
-          : <String, dynamic>{};
+      final data =
+          (res.data is Map)
+              ? Map<String, dynamic>.from(res.data)
+              : <String, dynamic>{};
       final token = data['customToken'] as String?;
 
       if (token == null || token.isEmpty) {
@@ -82,9 +84,9 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
       await FirebaseAuth.instance.signInWithCustomToken(token);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Welcome!')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Welcome!')));
       Navigator.pushReplacementNamed(context, '/splash');
     } on FirebaseFunctionsException catch (e) {
       setState(() => _error = e.message ?? e.code);
@@ -105,8 +107,9 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     if (result != null) {
       try {
         String? id;
-        final match =
-            RegExp(r'familyId[:=]\s*([a-zA-Z0-9_-]+)').firstMatch(result);
+        final match = RegExp(
+          r'familyId[:=]\s*([a-zA-Z0-9_-]+)',
+        ).firstMatch(result);
         if (match != null) {
           id = match.group(1);
         } else {
@@ -183,27 +186,31 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => EmailVerificationPage(
-              email: _emailController.text.trim(),
-              authService: _authService,
-              onVerified: () async {
-                // After verification, attach this parent to the scanned family.
-                final callable = FirebaseFunctions.instance
-                    .httpsCallable('createUserWithFamily');
-                await callable.call({
-                  'role': 'parent',
-                  'name': _nameController.text.trim(),
-                  'familyId': familyId, // join the scanned family
-                });
+            builder:
+                (_) => EmailVerificationPage(
+                  email: _emailController.text.trim(),
+                  authService: _authService,
+                  onVerified: () async {
+                    // After verification, attach this parent to the scanned family.
+                    final callable = FirebaseFunctions.instance.httpsCallable(
+                      'createUserWithFamily',
+                    );
+                    await callable.call({
+                      'role': 'parent',
+                      'name': _nameController.text.trim(),
+                      'familyId': familyId, // join the scanned family
+                    });
 
-                if (!mounted) return;
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SplashLoaderPage()),
-                  (route) => false,
-                );
-              },
-            ),
+                    if (!mounted) return;
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SplashLoaderPage(),
+                      ),
+                      (route) => false,
+                    );
+                  },
+                ),
           ),
         );
       }
@@ -231,39 +238,84 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     });
 
     try {
-      final googleProvider = GoogleAuthProvider();
-    googleProvider.addScope('profile'); // Add this to request the user's profile info
-    googleProvider.addScope('email');   // Optional: ensure email is included
+      UserCredential credResult;
 
-    final UserCredential credResult =
-        await FirebaseAuth.instance.signInWithProvider(googleProvider);
+      if (kIsWeb) {
+        // WEB: Firebase popup (no redirect page, no sessionStorage problem)
+        final googleProvider =
+            GoogleAuthProvider()
+              ..addScope('email')
+              ..addScope('profile')
+              ..setCustomParameters(<String, String>{
+                'prompt': 'select_account',
+              });
 
-    final User? firebaseUser = credResult.user;
-    if (firebaseUser == null) {
-      throw Exception('Firebase sign-in failed');
-    }
+        credResult = await FirebaseAuth.instance.signInWithPopup(
+          googleProvider,
+        );
+      } else {
+        // MOBILE (Android / iOS): google_sign_in v7.x native flow
+        final gsi.GoogleSignIn signIn = gsi.GoogleSignIn.instance;
 
-    // 2) Check if profile already exists
-    final uid = firebaseUser.uid;
-    final userDoc =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    if (userDoc.exists && (userDoc.data()!['familyId'] as String?)?.isNotEmpty == true) {
+        // Required in v7.x
+        await signIn.initialize();
+
+        if (!signIn.supportsAuthenticate()) {
+          throw Exception(
+            'GoogleSignIn.authenticate() is not supported on this platform.',
+          );
+        }
+
+        // Interactive Google sign-in
+        final gsi.GoogleSignInAccount user = await signIn.authenticate();
+
+        // Get tokens (only idToken is available/needed)
+        final gsi.GoogleSignInAuthentication googleAuth =
+            await user.authentication;
+
+        final String? idToken = googleAuth.idToken;
+        if (idToken == null) {
+          throw Exception('Google sign-in did not return an ID token.');
+        }
+
+        final OAuthCredential credential = GoogleAuthProvider.credential(
+          idToken: idToken,
+        );
+
+        credResult = await FirebaseAuth.instance.signInWithCredential(
+          credential,
+        );
+      }
+
+      final User? firebaseUser = credResult.user;
+      if (firebaseUser == null) {
+        throw Exception('Firebase sign-in failed');
+      }
+
+      // 2) Check if profile already exists
+      final uid = firebaseUser.uid;
+      final userDoc =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+
+      if (userDoc.exists &&
+          (userDoc.data()!['familyId'] as String?)?.isNotEmpty == true) {
         final proceed = await showDialog<bool>(
           context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Account exists'),
-            content: const Text('This user already exists. Sign in?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('No'),
+          builder:
+              (ctx) => AlertDialog(
+                title: const Text('Account exists'),
+                content: const Text('This user already exists. Sign in?'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('No'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('Yes'),
+                  ),
+                ],
               ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Yes'),
-              ),
-            ],
-          ),
         );
 
         if (proceed == true) {
@@ -274,21 +326,25 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           );
         } else {
           await _authService.logout();
+          // Also clear Google account on mobile (safe no-op on web)
           await gsi.GoogleSignIn.instance.signOut();
           if (mounted) setState(() => _loading = false);
         }
         return;
       }
 
-      // No profile yet -> join the scanned family with callable
-      final callable =
-          FirebaseFunctions.instance.httpsCallable('createUserWithFamily');
+      // 3) No profile yet -> join the scanned family via callable
+      final callable = FirebaseFunctions.instance.httpsCallable(
+        'createUserWithFamily',
+      );
       await callable.call({
         'role': 'parent',
-        'name': (firebaseUser.displayName ?? (_nameController.text.trim().isNotEmpty
-          ? _nameController.text.trim() :
-           'Parent')),
-        'familyId': familyId, // <— join the scanned family
+        'name':
+            (firebaseUser.displayName ??
+                (_nameController.text.trim().isNotEmpty
+                    ? _nameController.text.trim()
+                    : 'Parent')),
+        'familyId': familyId, // join the scanned family
       });
 
       if (!mounted) return;
@@ -307,10 +363,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
       children: [
         Text(
           title,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w900,
-          ),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
       ],
     );
@@ -342,7 +395,9 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
                 Expanded(
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 12),
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFE8F5E9),
                       borderRadius: BorderRadius.circular(12),
@@ -350,8 +405,10 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.check_circle,
-                            color: Color(0xFF2E7D32)),
+                        const Icon(
+                          Icons.check_circle,
+                          color: Color(0xFF2E7D32),
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -382,10 +439,7 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
             ),
           if (_qrScanError != null) ...[
             const SizedBox(height: 8),
-            Text(
-              _qrScanError!,
-              style: const TextStyle(color: Colors.red),
-            ),
+            Text(_qrScanError!, style: const TextStyle(color: Colors.red)),
           ],
         ],
       ),
@@ -408,13 +462,15 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
     return Directionality(
       textDirection: TextDirection.ltr,
       child: Scaffold(
-        appBar:
-            AppBar(title: Text(isChild ? 'Join as Child' : 'Join as Parent')),
+        appBar: AppBar(
+          title: Text(isChild ? 'Join as Child' : 'Join as Parent'),
+        ),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : (isChild ? _buildChildBody() : _buildSecondParentBody()),
+          child:
+              _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : (isChild ? _buildChildBody() : _buildSecondParentBody()),
         ),
       ),
     );
@@ -435,8 +491,9 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           onPressed: _scanInviteAndSignIn,
           icon: const Icon(Icons.qr_code_scanner),
           label: const Text('Scan My Sign-up QR'),
-          style:
-              ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
@@ -448,19 +505,20 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
 
   // --------- SECOND PARENT layout (Step 1 + Step 2) ---------
   Widget _buildSecondParentBody() {
-    final disabledHint = !_isLinked
-        ? const Padding(
-            padding: EdgeInsets.only(top: 8.0),
-            child: Text(
-              'Scan the Family QR above to enable sign up.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.black54,
-                fontWeight: FontWeight.w600,
+    final disabledHint =
+        !_isLinked
+            ? const Padding(
+              padding: EdgeInsets.only(top: 8.0),
+              child: Text(
+                'Scan the Family QR above to enable sign up.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-          )
-        : const SizedBox.shrink();
+            )
+            : const SizedBox.shrink();
 
     return Form(
       key: _formKey,
@@ -476,8 +534,8 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
           TextFormField(
             controller: _nameController,
             decoration: const InputDecoration(labelText: 'Name'),
-            validator: (val) =>
-                val == null || val.isEmpty ? 'Enter your name' : null,
+            validator:
+                (val) => val == null || val.isEmpty ? 'Enter your name' : null,
           ),
           TextFormField(
             controller: _emailController,
@@ -494,13 +552,12 @@ class _RegisterJoinFamilyPageState extends State<RegisterJoinFamilyPage> {
             controller: _passwordController,
             decoration: const InputDecoration(labelText: 'Password'),
             obscureText: true,
-            validator: (val) =>
-                val == null || val.length < 6 ? 'Too short' : null,
+            validator:
+                (val) => val == null || val.length < 6 ? 'Too short' : null,
           ),
           TextFormField(
             controller: _confirmPasswordController,
-            decoration:
-                const InputDecoration(labelText: 'Confirm password'),
+            decoration: const InputDecoration(labelText: 'Confirm password'),
             obscureText: true,
             validator: (val) {
               if (val == null || val.isEmpty) {
