@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart' as gsi;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class SignInPage extends StatefulWidget {
   const SignInPage({super.key});
@@ -59,15 +60,54 @@ class _SignInPageState extends State<SignInPage> {
     });
 
     try {
-      // 1) Native Google sign-in (Android/iOS)
-      final googleProvider = GoogleAuthProvider();
-      googleProvider.addScope(
-        'profile',
-      ); // Add this to request the user's profile info
-      googleProvider.addScope('email'); // Optional: ensure email is included
+      UserCredential credResult;
 
-      final UserCredential credResult = await FirebaseAuth.instance
-          .signInWithProvider(googleProvider);
+      if (kIsWeb) {
+        // WEB: use popup-based Firebase Auth (no redirect / sessionStorage issues)
+        final googleProvider =
+            GoogleAuthProvider()
+              ..addScope('email')
+              ..addScope('profile')
+              ..setCustomParameters(<String, String>{
+                'prompt': 'select_account',
+              });
+
+        credResult = await FirebaseAuth.instance.signInWithPopup(
+          googleProvider,
+        );
+      } else {
+        // MOBILE (Android / iOS): use google_sign_in v7.x
+        final gsi.GoogleSignIn signIn = gsi.GoogleSignIn.instance;
+
+        // Required for v7.x
+        await signIn.initialize();
+
+        if (!signIn.supportsAuthenticate()) {
+          throw Exception(
+            'GoogleSignIn.authenticate() is not supported on this platform.',
+          );
+        }
+
+        // Interactive sign-in
+        final gsi.GoogleSignInAccount user = await signIn.authenticate();
+
+        // Get tokens (idToken only in v7.x)
+        final gsi.GoogleSignInAuthentication googleAuth =
+            await user.authentication;
+
+        final String? idToken = googleAuth.idToken;
+        if (idToken == null) {
+          throw Exception('Google sign-in did not return an ID token.');
+        }
+
+        final OAuthCredential credential = GoogleAuthProvider.credential(
+          idToken: idToken,
+        );
+
+        credResult = await FirebaseAuth.instance.signInWithCredential(
+          credential,
+        );
+      }
 
       final User? firebaseUser = credResult.user;
       if (firebaseUser == null) {
