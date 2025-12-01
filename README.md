@@ -1,16 +1,31 @@
-# chore_bid
+ChoreBid - Family Chore Management
 
-A new Flutter project.
+ChoreBid is a Flutter application that helps families organize household chores, motivate children through a task system, and teach responsibility and financial literacy. The app supports multi child households, parent child roles, real time chore updates, and automated push notifications.
 
-## Getting Started
+🚀 Features
 
-This project is a starting point for a Flutter application.
+Family Roles & Onboarding
+Create a family as the first parent.
 
-A few resources to get you started if this is your first Flutter project:
+Add second parent and children via secure QR code pairing.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+Children sign up without email (auto generated accounts).
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Real-time family data synced via Firestore listeners.
+
+Chore Management
+Create chores with:
+
+Title
+
+Description
+
+Deadline
+
+Specific children or All Children
+
+Two chore types:
+
+Exclusive: all children see it, but once one child claims it, it disappears for the others.
+
+Non-exclusive: each child may claim and complete their own instance.
